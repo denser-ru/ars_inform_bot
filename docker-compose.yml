@@ -1,0 +1,34 @@
+version: '3'
+services:
+  # Сервис для вашего телеграм бота
+  bot:
+    build: .
+    command: python3 bot.py
+    depends_on:
+      - db # Указываем, что бот зависит от базы данных
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@bd:5432/postgres # Переменная окружения для подключения к базе данных
+    networks:
+      - app-network # Указываем, что бот принадлежит к сети app-network
+    container_name: bot # Задаем сетевое имя для контейнера
+
+  # Сервис для postgres
+  db:
+    image: postgres:13 # Используем официальный образ postgres версии 13
+    environment:
+      - POSTGRES_PASSWORD=postgres # Устанавливаем пароль для пользователя postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/ # Монтируем том для хранения данных
+    networks:
+      - app-network # Указываем, что база данных принадлежит к сети app-network
+    container_name: bd # Задаем сетевое имя для контейнера
+
+# Определяем сеть для связи между сервисами
+networks:
+  app-network:
+    driver: bridge
+    name: ars_inform_bot # Задаем имя сети
+
+# Определяем том для хранения данных postgres
+volumes:
+  postgres_data:
