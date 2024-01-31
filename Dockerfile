@@ -15,5 +15,4 @@ COPY . /app
 WORKDIR /app
 
 # Запускаем скрипт bot.py при запуске контейнера
-CMD ["bot.py"]
-ENTRYPOINT ["python3"]
+CMD ["python3", "bot.py"]

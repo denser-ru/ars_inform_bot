@@ -1,0 +1,6 @@
+# Используем образ ankane/pgvector как базовый
+FROM ankane/pgvector
+
+# Создаем расширения vector и pg_utils в базе данных
+RUN echo "CREATE EXTENSION vector;" >> /docker-entrypoint-initdb.d/pgvector.sql
+#RUN echo "CREATE EXTENSION pg_utils;" >> /docker-entrypoint-initdb.d/pgvector.sql
