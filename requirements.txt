@@ -2,3 +2,6 @@ aiogram
 requests
 # beautifulsoup4
 feedparser
+torch
+transformers
+psycopg2

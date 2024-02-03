@@ -11,6 +11,8 @@ services:
     networks:
       - app-network # Указываем, что бот принадлежит к сети app-network
     container_name: ars_inform_bot # Задаем сетевое имя для контейнера
+    volumes: # Монтируем папку с кодом приложения в контейнер
+      - ./:/app
 
   # Сервис для postgres
   db:

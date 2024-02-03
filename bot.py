@@ -1,5 +1,5 @@
 # Импортируем необходимые библиотеки
-import asyncio
+import asyncio, logging, json
 from random import randint
 import aiogram
 from aiogram import Bot, Dispatcher, types
@@ -9,6 +9,25 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram import F
 
+from search import MessagesVectorizer
+
+# Импортируем настроки журналирования из файла logger.py
+from logger import logger
+# Устанавливаем минимальный уровень важности для логгера равным DEBUG
+logger.setLevel(logging.INFO)
+
+def get_conf():
+    # Открываем файл settings.json в режиме чтения
+    logger.debug("Открываем файл settings.json в режиме чтения...")
+    with open( "./settings.json", "r" ) as f:
+        # Десериализуем JSON-строку в словарь с помощью функции loads
+        logger.debug("Десериализуем JSON-строку в словарь с помощью функции loads...")
+        settings = json.loads(f.read())
+    # Закрываем файл
+    f.close()
+    return settings
+
+settings = get_conf()
 
 # Получаем токен бота из @BotFather
 TOKEN = "6704611209:AAEPk5dX1NPkqS3RBuC6Q0DeiwsJncR_7U8"
@@ -17,6 +36,8 @@ TOKEN = "6704611209:AAEPk5dX1NPkqS3RBuC6Q0DeiwsJncR_7U8"
 bot = Bot(token=TOKEN)
 # Диспетчер
 dp = Dispatcher()
+
+mv = MessagesVectorizer(settings=settings, model_name='intfloat/multilingual-e5-large', vector_size=1024, bot=bot)
 
 
 # Создаем функцию-обработчик для команды /start
@@ -58,9 +79,13 @@ async def start(message: aiogram.types.Message):
         input_field_placeholder="Выберите способ подачи"
     )
 
+    # await message.answer(
+    #     "Вы можете написать мне зарос, команду или выберать действие в меню(⌘):",
+    #     reply_markup=builder.as_markup(resize_keyboard=True),
+    # )
+
     await message.answer(
-        "Вы можете написать мне зарос, команду или выберать действие в меню(⌘):",
-        reply_markup=builder.as_markup(resize_keyboard=True),
+        "Вы можете написать мне зарос, команду или выберать действие в меню(⌘):", reply_markup=keyboard,
     )
 
 # @dp.message(F.text.lower() == "с пюрешкой")
@@ -100,7 +125,10 @@ async def cmd_search(
             "Ошибка: не переданы аргументы"
         )
         return
-    await message.reply(f"Вы искали: <pre>{command.args}</pre>\n\nК сожалению, команда <code>/news</code> пока ещё в разработке", parse_mode='HTML')
+    results = mv.search_query(command.args)
+    # Выведите результаты поиску на экран или в файл
+    results_text = mv.interpret_vector_search_result(results)
+    await message.reply(f"Вы искали: <pre>{command.args}</pre>\n\nНайдено:\n{results_text}", parse_mode='HTML')
 
 @dp.message(Command("news"))
 async def cmd_news(message: types.Message):

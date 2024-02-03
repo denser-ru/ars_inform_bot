@@ -1,0 +1,16 @@
+{
+    "scan_interval": 0,
+    "DEBUG": 1,
+    "tmp_dir": "./tmp/",
+    "GEMINI_API_KEY": "AIzaSyDervOzi5w7GYyBGVbXA6JyzqZ2lEFC4oY",
+    "number_msgs": 5,
+    "number_words": 30,
+    "db_config":
+        {
+        "host": "ars_inform_bd",
+        "port": 5432,
+        "user": "postgres",
+        "password": "postgres",
+        "dbname": "postgres"
+    }
+}
