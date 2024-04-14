@@ -14,7 +14,7 @@ from search import MessagesVectorizer
 # Импортируем настроки журналирования из файла logger.py
 from logger import logger
 # Устанавливаем минимальный уровень важности для логгера равным DEBUG
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 def get_conf():
     # Открываем файл settings.json в режиме чтения
@@ -32,12 +32,20 @@ settings = get_conf()
 # Получаем токен бота из @BotFather
 TOKEN = "6704611209:AAEPk5dX1NPkqS3RBuC6Q0DeiwsJncR_7U8"
 
+
+async def bot_test(bot):
+    try:
+        user = await bot.get_me()
+        logger.debug(f"Бот успешно подключен. Имя бота: {user.first_name}, username: @{user.username}")
+    except Exception as e:
+        logger.debug(f"Ошибка подключения бота: {e}")
+
 # Объект бота
 bot = Bot(token=TOKEN)
 # Диспетчер
 dp = Dispatcher()
 
-mv = MessagesVectorizer(settings=settings, model_name='intfloat/multilingual-e5-large', vector_size=1024, bot=bot)
+mv = MessagesVectorizer(settings=settings, url='http://host.docker.internal:5123/vectorize', vector_size=1024, bot=bot)
 
 
 # Создаем функцию-обработчик для команды /start
@@ -145,6 +153,9 @@ async def send_random_value(callback: types.CallbackQuery):
 
 # Запуск процесса поллинга новых апдейтов
 async def main():
+    # Сначала проверяем соединение бота
+    await bot_test(bot)
+    # Затем начинаем поллинг
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
-import psycopg2, json
+import psycopg2, requests, json
 from datetime import datetime
-import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModel
+
 
 # Импортируем модуль logging
 import logging
@@ -15,68 +14,67 @@ logger.setLevel(logging.DEBUG)
 # Создайте класс для векторизации и хранения сообщений Телеграма
 class MessagesVectorizer:
     # Определите конструктор класса
-    def __init__(self, settings, model_name, vector_size, bot):
+    def __init__(self, settings, url, vector_size, bot):
         # Подключитесь к базе данных Postgres с помощью библиотеки psycopg2 и объекта config
         self.settings = settings
         self.config = settings["db_config"]
         config = self.config
-        self.conn = psycopg2.connect(**config)
-        self.cursor = self.conn.cursor()
-        # Загрузите модель E5-large и токенизатор
-        self.model = AutoModel.from_pretrained(model_name)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.url = url
         self.bot = bot
-        # Создайте таблицу для хранения векторов, если ее нет
-        logger.debug("Попытка создать тбалицу векторов, если она отсутствует")
-        self.cursor.execute(f"""CREATE TABLE IF NOT EXISTS vectors (message_id bigint, group_id bigint, topic_id bigint,
-                                    embedding vector ({vector_size}));
-                            CREATE UNIQUE INDEX IF NOT EXISTS idx_message ON vectors (message_id, group_id);
-                            CREATE INDEX ON vectors USING hnsw (embedding vector_cosine_ops);""")
-        # Сохраняем изменения в базе данных
-        self.conn.commit()
+        try:
+            # Попытка подключения к базе данных
+            self.conn = psycopg2.connect(**config)
+            self.cursor = self.conn.cursor()
+            logger.debug("Успешное подключение к базе данных.")
+            # # Создайте таблицу для хранения векторов, если ее нет
+            # logger.debug("Попытка создать тбалицу векторов, если она отсутствует")
+            # self.cursor.execute(f"""CREATE TABLE IF NOT EXISTS vectors (message_id bigint, group_id bigint, topic_id bigint,
+            #                             embedding vector ({vector_size}));
+            #                     CREATE UNIQUE INDEX IF NOT EXISTS idx_message ON vectors (message_id, group_id);
+            #                     CREATE INDEX ON vectors USING hnsw (embedding vector_cosine_ops);""")
+            # # Сохраняем изменения в базе данных
+            # self.conn.commit()
+            # logger.debug("Таблица векторов успешно создана или уже существует.")
+        except psycopg2.Error as e:
+            logger.error(f"Ошибка подключения к базе данных: {e}")
+        except Exception as e:
+            logger.error(f"Неизвестная ошибка: {e}")
 
     
     # Определите деструктор класса
     def __del__(self):
         # Закройте подключение к базе данных
         self.conn.close()
-    
-    # Определите метод для усреднения скрытых состояний модели по длине входного текста
-    def average_pool(self, last_hidden_states, attention_mask):
-        last_hidden = last_hidden_states * attention_mask[..., None].bool()
-        return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
-
-    # Определите метод для нормализации векторов по L2-норме
-    def normalize(self, embeddings):
-        return F.normalize(embeddings, p=2, dim=1)
 
     # Определите метод для векторизации одного сообщения
     def vectorize_message(self, message):
         # Токенизируйте текст сообщения с префиксом "query: "
         message = 'query: ' + message
-        inputs = self.tokenizer(message, max_length=512, padding=True, truncation=True, return_tensors='pt')
-        # Получите выходы модели
-        outputs = self.model(**inputs)
-        # Усредните скрытые состояния модели по длине текста
-        embeddings = self.average_pool(outputs.last_hidden_state, inputs['attention_mask'])
-        # Нормализуйте векторы по L2-норме
-        embeddings = self.normalize(embeddings)
-        # Верните вектор сообщения
-        return embeddings[0]
+
+        # Отправка POST-запроса с сообщением в формате JSON
+        response = requests.post(self.url, json=[message])
+        
+        # Проверка на успешный ответ от сервера
+        if response.status_code == 200:
+            # Получение и возврат вектора сообщения
+            return response.json()[0]
+        else:
+            # Обработка ошибки, если сервер не вернул успешный ответ
+            raise Exception('Ошибка сервера: HTTP статус', response.status_code)
 
     # Определите метод для поиска по векторному сходству по заданному запросу
     def search_query(self, query, limit=0):
         # Векторизуйте текст запроса
         logger.debug("векторизуем запрос")
         query_vector = self.vectorize_message(query)
-        # Преобразуйте тензор в массив NumPy
-        query_vector = query_vector.detach().numpy()
-        # Выполните запрос к базе данных, используя оператор <=>
-        query_vector = str(query_vector.tolist())
-        logger.debug("запрашиваем ближайшие соседи к вектору запроса")
-        # logger.info(f"векторизованный запрос: {query_vector}")
-        self.cursor.execute("SELECT message_id, group_id, topic_id, embedding <=> %s AS cosine_distance FROM vectors ORDER BY embedding <=> %s LIMIT %s",
-                                (query_vector, query_vector, limit or self.settings["number_msgs"]))
+        # Преобразование списка в строку, подходящую для SQL-запроса
+        query_vector_str = ','.join(str(e) for e in query_vector)
+        query_vector_str = '[' + query_vector_str + ']'
+
+        # Выполнение SQL-запроса с использованием курсора
+        self.cursor.execute("SELECT message_id, group_id, topic_id, embedding <-> %s AS cosine_distance FROM vectors ORDER BY embedding <-> %s LIMIT %s",
+                                        (query_vector_str, query_vector_str, limit or self.settings["number_msgs"]))
+
         # Получите все записи из базы данных
         logger.debug("сохраняем строки векторов в меременную")
         results = self.cursor.fetchall()
@@ -128,7 +126,7 @@ date: {date.strftime("%Y-%m-%d %H:%M")}
 score: {score}
 </pre>
 {text_raw}</blockquote>
-<a>{link}</a>"""
+<a>{link}</a>\n\n"""
             # # logger.debug(f"message_info:\n{message_info}")
             # message_info = json.loads( message_info )
             # # Добавим строку с информацией о сообщении в список messages_info

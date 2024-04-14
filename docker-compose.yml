@@ -8,11 +8,16 @@ services:
       - db # Указываем, что бот зависит от базы данных
     environment:
       - DATABASE_URL=postgres://postgres:postgres@bd:5432/postgres # Переменная окружения для подключения к базе данных
+      # # Добавить новую переменную окружения с адресом хоста
+      # - HOST_SERVICE_URL=http://host.docker.internal:5123
     networks:
       - app-network # Указываем, что бот принадлежит к сети app-network
     container_name: ars_inform_bot # Задаем сетевое имя для контейнера
     volumes: # Монтируем папку с кодом приложения в контейнер
       - ./:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # network_mode: host
 
   # Сервис для postgres
   db:
