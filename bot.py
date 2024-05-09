@@ -1,13 +1,13 @@
 # Импортируем необходимые библиотеки
-import asyncio, logging, json
+import asyncio, logging, json, time
 from random import randint
 import aiogram
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
 from aiogram.filters import CommandObject
-from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram import F
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from search import MessagesVectorizer
 
@@ -31,6 +31,11 @@ settings = get_conf()
 
 # Получаем токен бота из @BotFather
 TOKEN = "6704611209:AAEPk5dX1NPkqS3RBuC6Q0DeiwsJncR_7U8"
+
+# Словарь для кэширования результатов поиска
+cache = {}
+# Время жизни кэша (в секундах)
+CACHE_TTL = 300
 
 
 async def bot_test(bot):
@@ -71,7 +76,6 @@ async def start(message: aiogram.types.Message):
 Я надеюсь, что вы будете довольны моим сервисом и найдете то, что ищете. 😊
 """, parse_mode='HTML')
 
-    builder = ReplyKeyboardBuilder()
     # метод row позволяет явным образом сформировать ряд
     # из одной или нескольких кнопок.
     kb = [
@@ -84,25 +88,12 @@ async def start(message: aiogram.types.Message):
     keyboard = types.ReplyKeyboardMarkup(
         keyboard=kb,
         resize_keyboard=True,
-        input_field_placeholder="Выберите способ подачи"
+        input_field_placeholder="Выберите команду"
     )
-
-    # await message.answer(
-    #     "Вы можете написать мне зарос, команду или выберать действие в меню(⌘):",
-    #     reply_markup=builder.as_markup(resize_keyboard=True),
-    # )
 
     await message.answer(
         "Вы можете написать мне зарос, команду или выберать действие в меню(⌘):", reply_markup=keyboard,
     )
-
-# @dp.message(F.text.lower() == "с пюрешкой")
-# async def with_puree(message: types.Message):
-#     await message.reply("Отличный выбор!")
-
-# @dp.message(F.text.lower() == "без пюрешки")
-# async def without_puree(message: types.Message):
-#     await message.reply("Так невкусно!")
 
 
 @dp.message(Command("random"))
@@ -126,17 +117,74 @@ async def cmd_search(
         message: types.Message,
         command: CommandObject
         ):
-        # Если не переданы никакие аргументы, то
+    # Если не переданы никакие аргументы, то
     # command.args будет None
     if command.args is None:
         await message.reply(
             "Ошибка: не переданы аргументы"
         )
         return
-    results = mv.search_query(command.args)
+    results = mv.search_query(command.args, 50)
     # Выведите результаты поиску на экран или в файл
-    results_text = mv.interpret_vector_search_result(results)
-    await message.reply(f"Вы искали: <pre>{command.args}</pre>\n\nНайдено:\n{results_text}", parse_mode='HTML')
+
+    # Кэширование результатов
+    chat_id = message.chat.id
+    cache[chat_id] = {
+        "search_query": command.args,
+        "results": results[:50],
+        "current_page": 0,
+        "is_new": True,
+        "timestamp": time.time()
+    }
+
+    # Отображение первой страницы результатов
+    await display_results_page(message, chat_id, 0)
+
+async def display_results_page(message, chat_id, page_number):
+    # Проверка срока жизни кэша
+    if chat_id not in cache or time.time() - cache[chat_id]["timestamp"] > CACHE_TTL:
+        await message.reply("Результаты поиска устарели. Повторите запрос.")
+        return
+
+    results = cache[chat_id]["results"]
+    start_index = page_number * 10
+    end_index = min(start_index + 10, len(results))
+
+    # Форматирование результатов поиска
+    results_text = mv.interpret_vector_search_result(results[start_index:end_index])
+
+    # Клавиатура с кнопками
+    buttons = []
+    if page_number > 0:
+        buttons.append(InlineKeyboardButton(text="Назад", callback_data=f"prev_page:{chat_id}"))
+    if end_index < len(results):
+        buttons.append(InlineKeyboardButton(text="Вперед", callback_data=f"next_page:{chat_id}"))
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+    # Отправка/обновление сообщения
+    if page_number == 0 and cache[chat_id]["is_new"]:
+        cache[chat_id]["is_new"] = False
+        await message.reply(text=f"Вы искали: <pre>{cache[chat_id]['search_query']}</pre>\n\nНайдено:\n{results_text}", reply_markup=keyboard, parse_mode='HTML')
+    else:
+        await message.edit_text(text=f"Вы искали: <pre>{cache[chat_id]['search_query']}</pre>\n\nНайдено:\n{results_text}", reply_markup=keyboard, parse_mode='HTML')
+
+
+@dp.callback_query(lambda c: c.data.startswith("prev_page:") or c.data.startswith("next_page:"))
+async def handle_pagination(callback_query: types.CallbackQuery):
+    chat_id = int(callback_query.data.split(":")[1])
+    action = callback_query.data.split(":")[0]
+
+    if chat_id not in cache:
+        return
+
+    current_page = cache[chat_id]["current_page"]
+    if action == "prev_page":
+        new_page = max(0, current_page - 1)
+    else:
+        new_page = min(4, current_page + 1)
+
+    cache[chat_id]["current_page"] = new_page
+    await display_results_page(callback_query.message, chat_id, new_page)
 
 @dp.message(Command("news"))
 async def cmd_news(message: types.Message):
