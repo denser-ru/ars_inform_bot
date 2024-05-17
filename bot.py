@@ -1,5 +1,5 @@
 # Импортируем необходимые библиотеки
-import asyncio, logging, json, time
+import asyncio, logging, json, time, base64
 from random import randint
 import aiogram
 from aiogram import Bot, Dispatcher, types
@@ -7,7 +7,7 @@ from aiogram.filters.command import Command
 from aiogram.filters import CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram import F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 from search import MessagesVectorizer
 
@@ -36,6 +36,12 @@ TOKEN = "6704611209:AAEPk5dX1NPkqS3RBuC6Q0DeiwsJncR_7U8"
 cache = {}
 # Время жизни кэша (в секундах)
 CACHE_TTL = 300
+# Начальные настройки бота
+settings_def = {
+    "start_date": "*",
+	"end_date": "*",
+	"sort_by": 'relevance'
+}
 
 
 async def bot_test(bot):
@@ -78,10 +84,22 @@ async def start(message: aiogram.types.Message):
 
     # метод row позволяет явным образом сформировать ряд
     # из одной или нескольких кнопок.
+    chat_id = message.chat.id
+    if not chat_id in cache:
+        cache[chat_id] = {
+            "settings": settings_def,
+            "current_page": 0,
+            "is_new": True,
+            "timestamp": time.time()
+        }
+    encoded_settings = base64.urlsafe_b64encode(json.dumps(cache[chat_id]["settings"]).encode()).decode()
+    url = f"https://denser-ru.github.io/ars_bot_webapp/settings.html?settings={encoded_settings}"
+    # web_app_button = InlineKeyboardButton(text="Открыть настройки",
+    #                                   web_app=WebAppInfo(url="https://your-web-app-url.com"))
     kb = [
         [
             types.KeyboardButton(text="/start"),
-            types.KeyboardButton(text="/resume"),
+            types.KeyboardButton(text="/settings", web_app=WebAppInfo(url=url)),
             types.KeyboardButton(text="/currency")
         ],
     ]
@@ -95,6 +113,36 @@ async def start(message: aiogram.types.Message):
         "Вы можете написать мне зарос, команду или выберать действие в меню(⌘):", reply_markup=keyboard,
     )
 
+@dp.message(F.web_app_data)
+async def handle_web_app_data(message: types.Message):
+    # Теперь вы можете использовать web_app_data в вашем коде
+    data = json.loads(message.web_app_data.data)
+    logger.debug(f"Получены данные:{data}")
+    chat_id = message.chat.id
+    if chat_id in cache:
+        cache[chat_id]["settings"] = data
+    else:
+        cache[chat_id] = {
+            "settings": data,
+            "current_page": 0,
+            "is_new": True,
+            "timestamp": time.time()
+        }
+    encoded_settings = base64.urlsafe_b64encode(json.dumps(cache[chat_id]["settings"]).encode()).decode()
+    url = f"https://denser-ru.github.io/ars_bot_webapp/settings.html?settings={encoded_settings}"
+    kb = [
+        [
+            types.KeyboardButton(text="/start"),
+            types.KeyboardButton(text="/settings", web_app=WebAppInfo(url=url)),
+            types.KeyboardButton(text="/currency")
+        ],
+    ]
+    keyboard = types.ReplyKeyboardMarkup(
+        keyboard=kb,
+        resize_keyboard=True,
+        input_field_placeholder="Выберите команду"
+    )
+    await message.answer(f"Получены данные web_app: {message.web_app_data.data}", reply_markup=keyboard)
 
 @dp.message(Command("random"))
 async def cmd_random(message: types.Message):
@@ -124,14 +172,20 @@ async def cmd_search(
             "Ошибка: не переданы аргументы"
         )
         return
-    results = mv.search_query(command.args, 50)
+    chat_id = message.chat.id
+    results = mv.search_query(command.args, start_date=cache[chat_id]["settings"]["start_date"], limit=50)
     # Выведите результаты поиску на экран или в файл
 
     # Кэширование результатов
-    chat_id = message.chat.id
+    
+    if chat_id in cache:
+        set_settings = cache[chat_id]["settings"]
+    else:
+        set_settings = settings_def
     cache[chat_id] = {
         "search_query": command.args,
         "results": results[:50],
+        "settings": set_settings,
         "current_page": 0,
         "is_new": True,
         "timestamp": time.time()

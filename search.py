@@ -11,6 +11,17 @@ logger.propagate = True
 # Устанавливаем уровень логирования для дочернего логгера
 logger.setLevel(logging.DEBUG)
 
+# Функция для проверки корректности даты
+def is_valid_date(date_str):
+    try:
+        # Попытка преобразовать строку в дату
+        date = datetime.strptime(date_str, '%Y-%m-%d')
+        # Проверка, что дата не старше 2019-01-01
+        return date >= datetime(2019, 1, 1)
+    except ValueError:
+        # Возвращается False, если дата не корректна
+        return False
+
 # Создайте класс для векторизации и хранения сообщений Телеграма
 class MessagesVectorizer:
     # Определите конструктор класса
@@ -63,7 +74,7 @@ class MessagesVectorizer:
             raise Exception('Ошибка сервера: HTTP статус', response.status_code)
 
     # Определите метод для поиска по векторному сходству по заданному запросу
-    def search_query(self, query, limit=0):
+    def search_query(self, query, start_date=False, limit=0):
         # Векторизуйте текст запроса
         logger.debug("векторизуем запрос")
         query_vector = self.vectorize_message(query)
@@ -72,8 +83,22 @@ class MessagesVectorizer:
         query_vector_str = '[' + query_vector_str + ']'
 
         # Выполнение SQL-запроса с использованием курсора
-        self.cursor.execute("SELECT message_id, group_id, topic_id, embedding <-> %s AS cosine_distance FROM vectors ORDER BY embedding <-> %s LIMIT %s",
-                                        (query_vector_str, query_vector_str, limit or self.settings["number_msgs"]))
+        # Проверка корректности даты
+        if is_valid_date(start_date):
+            # Преобразование текстовой даты в timestamp
+            start_date = datetime.strptime(start_date, '%Y-%m-%d')
+            # Параметризованный запрос SQL с фильтрацией по дате
+            self.cursor.execute("""
+                SELECT v.message_id, v.group_id, v.topic_id, v.embedding <-> %s AS cosine_distance, m.date
+                FROM vectors v
+                JOIN messages m ON v.message_id = m.message_id AND v.group_id = m.group_id
+                WHERE m.date >= %s
+                ORDER BY v.embedding <-> %s
+                LIMIT %s
+                """, (query_vector_str, start_date, query_vector_str, limit or self.settings["number_msgs"]))
+        else:
+            self.cursor.execute("SELECT message_id, group_id, topic_id, embedding <-> %s AS cosine_distance FROM vectors ORDER BY embedding <-> %s LIMIT %s",
+                                            (query_vector_str, query_vector_str, limit or self.settings["number_msgs"]))
 
         # Получите все записи из базы данных
         logger.debug("сохраняем строки векторов в меременную")
@@ -89,8 +114,9 @@ class MessagesVectorizer:
         messages_info = []
         messages_info_txt = ""
         # Проходим по списку кортежей с помощью цикла for
-        for message_id, group_id, topic_id, score in result:
-            # Получаем текст сообщения из таблицы messages по message_id, group_id и topic_id с помощью метода execute курсора
+        for entry in result:
+            # Распаковываем только первые четыре значения
+            message_id, group_id, topic_id, score = entry[:4]
             self.cursor.execute("""SELECT g.title, g.group_entity_id, m.text, m.date FROM messages AS m, groups AS g
                                     WHERE g.id = m.group_id AND m.message_id = %s AND m.group_id = %s AND m.topic_id = %s""",
                                     (message_id, group_id, topic_id))
