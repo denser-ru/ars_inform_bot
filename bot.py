@@ -74,7 +74,7 @@ async def start(message: aiogram.types.Message):
 
 <b><u>Для начала работы с ботом введите одну из следующих команд:</u></b>
 <code>/start</code> - начать новую беседу 🆕
-<code>/resume</code> - обобщить текущую беседу 📝
+<code>/settings</code> - настройки поиска 📝
 <code>/search</code> - поиск по сообщениям в тематических чатах/каналах 🔎
 <code>/news</code> - подборка новостей по ключевым словам и без 📢
 <code>/currency</code> - получить актуальные курсы валют на популярных торговых площадках(ARS, RUB, USDT...)💱
@@ -142,7 +142,8 @@ async def handle_web_app_data(message: types.Message):
         resize_keyboard=True,
         input_field_placeholder="Выберите команду"
     )
-    await message.answer(f"Получены данные web_app: {message.web_app_data.data}", reply_markup=keyboard)
+    # await message.answer(f"Новые настройки сохранены": {message.web_app_data.data}", reply_markup=keyboard)
+    await message.answer("Новые настройки сохранены", reply_markup=keyboard)
 
 @dp.message(Command("random"))
 async def cmd_random(message: types.Message):
@@ -173,7 +174,13 @@ async def cmd_search(
         )
         return
     chat_id = message.chat.id
-    results = mv.search_query(command.args, start_date=cache[chat_id]["settings"]["start_date"], limit=50)
+    results = mv.search_query(
+        command.args,
+        start_date=cache[chat_id]["settings"]["start_date"],
+        end_date=cache[chat_id]["settings"]["end_date"],
+        sorting=cache[chat_id]["settings"]["sort_by"],
+        limit=50
+    )
     # Выведите результаты поиску на экран или в файл
 
     # Кэширование результатов

@@ -12,15 +12,25 @@ logger.propagate = True
 logger.setLevel(logging.DEBUG)
 
 # Функция для проверки корректности даты
-def is_valid_date(date_str):
+def validDates(dates_str):
+    dates = [False, False]
     try:
         # Попытка преобразовать строку в дату
-        date = datetime.strptime(date_str, '%Y-%m-%d')
+        start_date = datetime.strptime(dates_str[0], '%Y-%m-%d')
         # Проверка, что дата не старше 2019-01-01
-        return date >= datetime(2019, 1, 1)
+        if start_date >= datetime(2019, 1, 1) and start_date <= datetime.now():
+            dates[0] = start_date
     except ValueError:
-        # Возвращается False, если дата не корректна
-        return False
+        logger.debug("Дата start_date не корректна")
+    try:
+        # Попытка преобразовать строку в дату
+        end_date = datetime.strptime(dates_str[1], '%Y-%m-%d')
+        # Проверка, что дата не старше сегодняшней
+        if end_date <= datetime.now():
+            dates[1] = end_date
+    except ValueError:
+        logger.debug("Дата end_date не корректна")
+    return dates
 
 # Создайте класс для векторизации и хранения сообщений Телеграма
 class MessagesVectorizer:
@@ -74,7 +84,7 @@ class MessagesVectorizer:
             raise Exception('Ошибка сервера: HTTP статус', response.status_code)
 
     # Определите метод для поиска по векторному сходству по заданному запросу
-    def search_query(self, query, start_date=False, limit=0):
+    def search_query(self, query, start_date=False, end_date=False, sorting=False, limit=0):
         # Векторизуйте текст запроса
         logger.debug("векторизуем запрос")
         query_vector = self.vectorize_message(query)
@@ -84,25 +94,47 @@ class MessagesVectorizer:
 
         # Выполнение SQL-запроса с использованием курсора
         # Проверка корректности даты
-        if is_valid_date(start_date):
-            # Преобразование текстовой даты в timestamp
-            start_date = datetime.strptime(start_date, '%Y-%m-%d')
-            # Параметризованный запрос SQL с фильтрацией по дате
-            self.cursor.execute("""
-                SELECT v.message_id, v.group_id, v.topic_id, v.embedding <-> %s AS cosine_distance, m.date
-                FROM vectors v
-                JOIN messages m ON v.message_id = m.message_id AND v.group_id = m.group_id
-                WHERE m.date >= %s
-                ORDER BY v.embedding <-> %s
-                LIMIT %s
-                """, (query_vector_str, start_date, query_vector_str, limit or self.settings["number_msgs"]))
-        else:
-            self.cursor.execute("SELECT message_id, group_id, topic_id, embedding <-> %s AS cosine_distance FROM vectors ORDER BY embedding <-> %s LIMIT %s",
-                                            (query_vector_str, query_vector_str, limit or self.settings["number_msgs"]))
+        valid_dates = [start_date, end_date]
+        valid_dates = validDates( valid_dates )
+        start_date = valid_dates[0]
+        end_date = valid_dates[1]
+        # Параметризованный запрос SQL с фильтрацией по дате
+        query = """
+            SELECT v.message_id, v.group_id, v.topic_id, v.embedding <-> %s AS cosine_distance, m.date
+            FROM vectors v
+            JOIN messages m ON v.message_id = m.message_id AND v.group_id = m.group_id
+        """
+        # Добавляем условия фильтрации по датам, если они не False
+        conditions = []
+        params = [query_vector_str]  # Параметры для вектора запроса
+        if start_date:
+            conditions.append("m.date >= %s")
+            params.append(start_date)
+        if end_date:
+            conditions.append("m.date <= %s")
+            params.append(end_date)
+        # Если есть условия, добавляем их в запрос
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY v.embedding <-> %s LIMIT %s"
+        # Если limit не определен, используем значение по умолчанию из настроек
+        params.append(query_vector_str)
+        params.append(limit or self.settings["number_msgs"])
+        # Выполняем запрос
+        self.cursor.execute(query, params)
 
         # Получите все записи из базы данных
         logger.debug("сохраняем строки векторов в меременную")
         results = self.cursor.fetchall()
+
+        # Сортировка
+        if sorting:
+            if sorting == 'date_asc':
+                # Сортировка прямая списка словарей по ключу 'date'
+                results = sorted(results, key=lambda x: x[4])
+            elif sorting == 'date_desc':
+                # Сортировка обратная списка словарей по ключу 'date'
+                results = sorted(results, key=lambda x: x[4], reverse=True)
 
         # Верните результаты поиска
         return results
