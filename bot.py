@@ -1,5 +1,6 @@
 # Импортируем необходимые библиотеки
 import asyncio, logging, json, time, base64
+from datetime import datetime, timedelta
 from random import randint
 import aiogram
 from aiogram import Bot, Dispatcher, types
@@ -10,6 +11,7 @@ from aiogram import F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 from search import MessagesVectorizer
+from binance_data_collector import RatesDataCollector
 
 # Импортируем настроки журналирования из файла logger.py
 from logger import logger
@@ -57,6 +59,8 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 mv = MessagesVectorizer(settings=settings, url='http://host.docker.internal:5123/vectorize', vector_size=1024, bot=bot)
+rdc = RatesDataCollector(settings["db_config"])
+
 
 
 # Создаем функцию-обработчик для команды /start
@@ -251,9 +255,25 @@ async def handle_pagination(callback_query: types.CallbackQuery):
 async def cmd_news(message: types.Message):
     await message.reply("Команда <code>/news</code> пока ещё в разработке", parse_mode='HTML')
 
-@dp.message(Command("currency"))
-async def cmd_currency(message: types.Message):
-    await message.reply("Команда <code>/currency</code> пока ещё в разработке", parse_mode='HTML')
+@dp.message( Command( "currency" ) )
+async def cmd_currency( message: types.Message ):
+    rates_sources = rdc.get_sourses()
+    # Преобразование в словарь
+    # rates_sources_dict = {source: rate for source, rate in rates_sources}
+    # rates_sources_dict = dict( rates_sources )
+    # logger.debug( f"rates_sources: { rates_sources_dict }" )
+    # Проход по словарю
+    rate_txt_line = '' 
+    for row in rates_sources:
+        source_name, source_id, title = row
+        latest_data_sell = rdc.get_data( source_id, 'SELL' )[0]
+        latest_data_buy = rdc.get_data( source_id, 'BUY')[0]
+        time_delta = timedelta(hours=-3)
+        rate_txt_line += f"<blockquote><code>({ title }):</code>\n"
+        rate_txt_line += f'<i>д.п. обновления: {(latest_data_sell[5] + time_delta).strftime("%Y-%m-%d %H:%M")}</i></blockquote>'
+        rate_txt_line += f'    <b>{round(latest_data_sell[4], 2)}</b> / <b>{round(latest_data_buy[4], 2)}</b>\n\n'
+    msg = "<b>Курсы ARS к USD</b> (USDT)\n\n" + rate_txt_line
+    await message.reply(msg, parse_mode='HTML')
 
 
 @dp.callback_query(F.data == "random_value")
