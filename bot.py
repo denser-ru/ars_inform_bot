@@ -201,6 +201,10 @@ async def cmd_search(
         )
         return
     chat_id = message.chat.id
+
+    # Логируем действие пользователя "поиск"
+    db_manager.log_user_action(message.from_user.id, "search", command.args)
+
     results = mv.search_query(
         command.args,
         start_date=cache[chat_id]["settings"]["start_date"],
@@ -286,6 +290,10 @@ async def cmd_currency( message: types.Message ):
     # rates_sources_dict = dict( rates_sources )
     # logger.debug( f"rates_sources: { rates_sources_dict }" )
     # Проход по словарю
+
+    # Логируем действие пользователя "получение курса валют"
+    db_manager.log_user_action(message.from_user.id, "currency")
+
     rate_txt_line = '' 
     for row in rates_sources:
         source_name, source_id, title = row

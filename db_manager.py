@@ -43,3 +43,17 @@ class DBManager:
             (settings, user_id)
         )
         self.db_connection.commit()
+
+    def log_user_action(self, user_id, command, parameters=None):
+        """Логирует действие пользователя в базе данных.
+
+        Args:
+            user_id (int): ID пользователя.
+            command (str): Команда, выполненная пользователем.
+            parameters (str, optional): Параметры команды. Defaults to None.
+        """
+        self.db_cursor.execute(
+            "INSERT INTO user_actions (user_id, command, parameters) VALUES (%s, %s, %s);",
+            (user_id, command, parameters)
+        )
+        self.db_connection.commit()
