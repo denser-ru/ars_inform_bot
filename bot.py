@@ -12,6 +12,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 from search import MessagesVectorizer
 from binance_data_collector import RatesDataCollector
+from db_manager import DBManager
 
 # Импортируем настроки журналирования из файла logger.py
 from logger import logger
@@ -61,6 +62,8 @@ dp = Dispatcher()
 mv = MessagesVectorizer(settings=settings, url='http://host.docker.internal:5123/vectorize', vector_size=1024, bot=bot)
 rdc = RatesDataCollector(settings["db_config"])
 
+# Создаем объект DBManager
+db_manager = DBManager(settings["db_config"])
 
 
 # Создаем функцию-обработчик для команды /start
@@ -89,7 +92,23 @@ async def start(message: aiogram.types.Message):
     # метод row позволяет явным образом сформировать ряд
     # из одной или нескольких кнопок.
     chat_id = message.chat.id
-    if not chat_id in cache:
+    user = await bot.get_chat(chat_id) # Получаем информацию о пользователе
+
+    # Проверяем наличие пользователя в базе данных
+    user_data = db_manager.get_user(user.id)
+    if user_data and user_data[5] is not None: # Проверяем наличие настроек
+        # Загружаем настройки пользователя из базы данных
+        cache[chat_id] = {
+            "settings": user_data[5],
+            "current_page": 0,
+            "is_new": True,
+            "timestamp": time.time()
+        }
+    else:
+        # Создаем новую запись для пользователя в базе данных, если его нет
+        if not user_data:
+            db_manager.add_user(user.id, user.username, user.first_name, user.last_name, message.from_user.language_code)
+        db_manager.add_user_settings(user.id, json.dumps(settings_def))
         cache[chat_id] = {
             "settings": settings_def,
             "current_page": 0,
@@ -146,6 +165,10 @@ async def handle_web_app_data(message: types.Message):
         resize_keyboard=True,
         input_field_placeholder="Выберите команду"
     )
+
+        # Сохраняем настройки пользователя в базу данных
+    db_manager.update_user_settings(chat_id, json.dumps(data))
+
     # await message.answer(f"Новые настройки сохранены": {message.web_app_data.data}", reply_markup=keyboard)
     await message.answer("Новые настройки сохранены", reply_markup=keyboard)
 
