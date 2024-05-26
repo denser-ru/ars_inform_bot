@@ -12,5 +12,6 @@
         "user": "postgres",
         "password": "postgres",
         "dbname": "postgres"
-    }
+    },
+    "bot_dev_key": "6928736119:AAGU5LTz0WOEHZLxot3ug6xe69WO9Bp_4K8"
 }

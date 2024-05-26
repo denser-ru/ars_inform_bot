@@ -33,7 +33,7 @@ def get_conf():
 settings = get_conf()
 
 # Получаем токен бота из @BotFather
-TOKEN = "6704611209:AAEPk5dX1NPkqS3RBuC6Q0DeiwsJncR_7U8"
+TOKEN = settings["bot_dev_key"]
 
 # Словарь для кэширования результатов поиска
 cache = {}
@@ -63,31 +63,35 @@ mv = MessagesVectorizer(settings=settings, url='http://host.docker.internal:5123
 rdc = RatesDataCollector(settings["db_config"])
 
 # Создаем объект DBManager
-db_manager = DBManager(settings["db_config"])
+# для тестового бота дабаз: "exchange_rates_dev"
+db_manager = DBManager(settings["db_config"], dbname="exchange_rates_dev")
 
 
 # Создаем функцию-обработчик для команды /start
 @dp.message(Command("start")) # Используем фильтр Command вместо декоратора command_handler
 async def start(message: aiogram.types.Message):
     # Приветствуем пользователя
-    await message.reply("""<b>Добро пожаловать в ARS Inform! 🇦🇷</b>
+    start_text = f"""<b>Хочешь быть в курсе всех событий в Аргентине? 🇦🇷</b>
 
-<i>Меня зовут ARS, можно также обращаться как Арсик, и я поисковый бот Телеграмма, который поможет вам найти интересующую вас информацию по Аргентине. 🗺️</i>
+<b>ARS Inform — это твой личный гид по всему, что происходит в Аргентине!</b>
 
-С моей помощью вы можете:
-- Искать по тематическим форумам Аргентины, где обсуждаются различные вопросы, связанные с политикой, экономикой, культурой, спортом и т.д. 💬
-- Получать свежие и актуальные новости по ключевым словам или без них, чтобы быть в курсе последних событий в стране и мире. 📰
-- Собирать тематическую информацию по вашему запросу, например, о достопримечательностях, истории, географии, климате, населении и т.д. 📚
+<b>Я найду для тебя:</b>
 
-<b><u>Для начала работы с ботом введите одну из следующих команд:</u></b>
-<code>/start</code> - начать новую беседу 🆕
-<code>/settings</code> - настройки поиска 📝
-<code>/search</code> - поиск по сообщениям в тематических чатах/каналах 🔎
-<code>/news</code> - подборка новостей по ключевым словам и без 📢
-<code>/currency</code> - получить актуальные курсы валют на популярных торговых площадках(ARS, RUB, USDT...)💱
+* <b>Самые свежие новости и обсуждения:</b> От футбола до политики,  узнай все, что тебя интересует! ⚽️📰
+* <b>Отзывы о лучших ресторанах, достопримечательностях и многом другом:</b>  Ищешь идеальное место для ужина в Буэнос-Айресе или хочешь узнать, как получить визу? Я помогу! 🍽️🗺️
+* <b>Актуальный курс аргентинского песо:</b>  Следи за выгодными предложениями по обмену валют! 💸
 
-Я надеюсь, что вы будете довольны моим сервисом и найдете то, что ищете. 😊
-""", parse_mode='HTML')
+<b>ARS Inform использует передовые технологии векторного поиска, чтобы находить информацию, даже если ты не знаешь точных ключевых слов.  Например, вместо того, чтобы искать "лучшие рестораны Буэнос-Айреса", ты можешь просто написать "вкусные места в Буэнос-Айресе" и я пойму, что ты хочешь!</b>
+
+<b>Не трать время на долгий поиск в интернете! ARS Inform  найдет информацию за тебя!</b>
+
+<b>Начни использовать меня прямо сейчас!</b>
+
+* <b>Введи свой вопрос:</b>  Задай мне вопрос об Аргентине! 🤔
+* <b>Используй команду /search:</b>  Например, `/search лучшие рестораны Буэнос-Айреса`  или `/search как получить визу в Аргентину` 🔎
+* <b>Попробуй также команды:</b> `/news`, `/currency`.
+
+<b>Я буду рад тебе помочь! 😊</b>"""
 
     # метод row позволяет явным образом сформировать ряд
     # из одной или нескольких кнопок.
@@ -132,9 +136,9 @@ async def start(message: aiogram.types.Message):
         input_field_placeholder="Выберите команду"
     )
 
-    await message.answer(
-        "Вы можете написать мне зарос, команду или выберать действие в меню(⌘):", reply_markup=keyboard,
-    )
+    db_manager.log_user_action(message.from_user.id, "start")
+
+    await message.answer( start_text, parse_mode='HTML', reply_markup=keyboard, )
 
 @dp.message(F.web_app_data)
 async def handle_web_app_data(message: types.Message):
@@ -169,23 +173,14 @@ async def handle_web_app_data(message: types.Message):
         # Сохраняем настройки пользователя в базу данных
     db_manager.update_user_settings(chat_id, json.dumps(data))
 
+    db_manager.log_user_action(message.from_user.id, "settings", json.dumps(data))
+
     # await message.answer(f"Новые настройки сохранены": {message.web_app_data.data}", reply_markup=keyboard)
     await message.answer("Новые настройки сохранены", reply_markup=keyboard)
 
-@dp.message(Command("random"))
-async def cmd_random(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.add(types.InlineKeyboardButton(
-        text="Нажми меня",
-        callback_data="random_value")
-    )
-    await message.answer(
-        "Нажмите на кнопку, чтобы бот отправил число от 1 до 10",
-        reply_markup=builder.as_markup()
-    )
-
 @dp.message(Command("resume"))
 async def cmd_resume(message: types.Message):
+    db_manager.log_user_action(message.from_user.id, "resume")
     await message.reply("Команда <code>/resume</code> пока ещё в разработке", parse_mode='HTML')
 
 @dp.message(Command("search"))
@@ -280,6 +275,7 @@ async def handle_pagination(callback_query: types.CallbackQuery):
 
 @dp.message(Command("news"))
 async def cmd_news(message: types.Message):
+    db_manager.log_user_action(message.from_user.id, "news")
     await message.reply("Команда <code>/news</code> пока ещё в разработке", parse_mode='HTML')
 
 @dp.message( Command( "currency" ) )
@@ -300,11 +296,28 @@ async def cmd_currency( message: types.Message ):
         latest_data_sell = rdc.get_data( source_id, 'SELL' )[0]
         latest_data_buy = rdc.get_data( source_id, 'BUY')[0]
         time_delta = timedelta(hours=-3)
-        rate_txt_line += f"<blockquote><code>({ title }):</code>\n"
-        rate_txt_line += f'<i>д.п. обновления: {(latest_data_sell[5] + time_delta).strftime("%Y-%m-%d %H:%M")}</i></blockquote>'
-        rate_txt_line += f'    <b>{round(latest_data_sell[4], 2)}</b> / <b>{round(latest_data_buy[4], 2)}</b>\n\n'
+        rate_txt_line += f"<pre>{ title }: "
+        rate_txt_line += f'[<i>{(latest_data_sell[5] + time_delta).strftime("%Y-%m-%d %H:%M")}</i>]\n'
+        rate_txt_line += f'    <b>{round(latest_data_sell[4], 2)}</b> / <b>{round(latest_data_buy[4], 2)}</b></pre>\n\n'
     msg = "<b>Курсы ARS к USD</b> (USDT)\n\n" + rate_txt_line
     await message.reply(msg, parse_mode='HTML')
+
+# Обработчик всех сообщений, которое не является командой и не определённых команд
+@dp.message()
+async def handle_message(message: types.Message):
+    # Проверяем тип сообщения
+    if message.content_type == 'text':
+        # Обрабатываем текстовое сообщение
+        if message.text.startswith('/'):
+            command = message.text.split()[0]
+            db_manager.log_user_action(message.from_user.id, "unknown_command", message.text)
+            await message.reply("Извини, я не знаю такой команды. Попробуй ещё раз.")
+        else:
+            db_manager.log_user_action(message.from_user.id, "message", message.text)
+    else:
+        # Обрабатываем другие типы сообщений
+        content_type = message.content_type
+        db_manager.log_user_action(message.from_user.id, content_type)
 
 
 @dp.callback_query(F.data == "random_value")
