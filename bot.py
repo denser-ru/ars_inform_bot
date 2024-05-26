@@ -135,6 +135,8 @@ async def start(message: aiogram.types.Message):
         input_field_placeholder="Выберите команду"
     )
 
+    db_manager.log_user_action(message.from_user.id, "start")
+
     await message.answer( start_text, parse_mode='HTML', reply_markup=keyboard, )
 
 @dp.message(F.web_app_data)
@@ -170,23 +172,14 @@ async def handle_web_app_data(message: types.Message):
         # Сохраняем настройки пользователя в базу данных
     db_manager.update_user_settings(chat_id, json.dumps(data))
 
+    db_manager.log_user_action(message.from_user.id, "settings", json.dumps(data))
+
     # await message.answer(f"Новые настройки сохранены": {message.web_app_data.data}", reply_markup=keyboard)
     await message.answer("Новые настройки сохранены", reply_markup=keyboard)
 
-@dp.message(Command("random"))
-async def cmd_random(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.add(types.InlineKeyboardButton(
-        text="Нажми меня",
-        callback_data="random_value")
-    )
-    await message.answer(
-        "Нажмите на кнопку, чтобы бот отправил число от 1 до 10",
-        reply_markup=builder.as_markup()
-    )
-
 @dp.message(Command("resume"))
 async def cmd_resume(message: types.Message):
+    db_manager.log_user_action(message.from_user.id, "resume")
     await message.reply("Команда <code>/resume</code> пока ещё в разработке", parse_mode='HTML')
 
 @dp.message(Command("search"))
@@ -281,6 +274,7 @@ async def handle_pagination(callback_query: types.CallbackQuery):
 
 @dp.message(Command("news"))
 async def cmd_news(message: types.Message):
+    db_manager.log_user_action(message.from_user.id, "news")
     await message.reply("Команда <code>/news</code> пока ещё в разработке", parse_mode='HTML')
 
 @dp.message( Command( "currency" ) )
@@ -306,6 +300,23 @@ async def cmd_currency( message: types.Message ):
         rate_txt_line += f'    <b>{round(latest_data_sell[4], 2)}</b> / <b>{round(latest_data_buy[4], 2)}</b></pre>\n\n'
     msg = "<b>Курсы ARS к USD</b> (USDT)\n\n" + rate_txt_line
     await message.reply(msg, parse_mode='HTML')
+
+# Обработчик всех сообщений, которое не является командой и не определённых команд
+@dp.message()
+async def handle_message(message: types.Message):
+    # Проверяем тип сообщения
+    if message.content_type == 'text':
+        # Обрабатываем текстовое сообщение
+        if message.text.startswith('/'):
+            command = message.text.split()[0]
+            db_manager.log_user_action(message.from_user.id, "unknown_command", message.text)
+            await message.reply("Извини, я не знаю такой команды. Попробуй ещё раз.")
+        else:
+            db_manager.log_user_action(message.from_user.id, "message", message.text)
+    else:
+        # Обрабатываем другие типы сообщений
+        content_type = message.content_type
+        db_manager.log_user_action(message.from_user.id, content_type)
 
 
 @dp.callback_query(F.data == "random_value")
