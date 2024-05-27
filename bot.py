@@ -33,12 +33,15 @@ def get_conf():
 settings = get_conf()
 
 # Получаем токен бота из @BotFather
-TOKEN = "6704611209:AAEPk5dX1NPkqS3RBuC6Q0DeiwsJncR_7U8"
+if settings["DEV"]:
+    TOKEN = settings["bot_dev_key"]
+else:
+    TOKEN = settings["bot_key"]
 
 # Словарь для кэширования результатов поиска
 cache = {}
 # Время жизни кэша (в секундах)
-CACHE_TTL = 300
+CACHE_TTL = settings["CACHE_TTL"]
 # Начальные настройки бота
 settings_def = {
     "start_date": "*",
@@ -63,7 +66,37 @@ mv = MessagesVectorizer(settings=settings, url='http://host.docker.internal:5123
 rdc = RatesDataCollector(settings["db_config"])
 
 # Создаем объект DBManager
-db_manager = DBManager(settings["db_config"])
+# для тестового бота дабаз: "exchange_rates_dev"
+db_manager = DBManager( settings["db_config"], dbname="exchange_rates_dev" if settings["DEV"] else "exchange_rates" )
+
+async def check_cache( chat_id, message ):
+    if chat_id in cache:
+        return
+    else:
+        user = await bot.get_chat(chat_id) # Получаем информацию о пользователе
+        # Проверяем наличие пользователя в базе данных
+        user_data = db_manager.get_user(user.id)
+        if user_data and user_data[5] is not None: # Проверяем наличие настроек
+            # Загружаем настройки пользователя из базы данных
+            cache[chat_id] = {
+                "settings": user_data[5],
+                "current_page": 0,
+                "is_new": True,
+                "wait": None,
+                "timestamp": time.time()
+            }
+        else:
+            # Создаем новую запись для пользователя в базе данных, если его нет
+            if not user_data:
+                db_manager.add_user(user.id, user.username, user.first_name, user.last_name, message.from_user.language_code)
+            db_manager.add_user_settings(user.id, json.dumps(settings_def))
+            cache[chat_id] = {
+                "settings": settings_def,
+                "current_page": 0,
+                "is_new": True,
+                "wait": None,
+                "timestamp": time.time()
+            }
 
 
 # Создаем функцию-обработчик для команды /start
@@ -95,29 +128,9 @@ async def start(message: aiogram.types.Message):
     # метод row позволяет явным образом сформировать ряд
     # из одной или нескольких кнопок.
     chat_id = message.chat.id
-    user = await bot.get_chat(chat_id) # Получаем информацию о пользователе
 
-    # Проверяем наличие пользователя в базе данных
-    user_data = db_manager.get_user(user.id)
-    if user_data and user_data[5] is not None: # Проверяем наличие настроек
-        # Загружаем настройки пользователя из базы данных
-        cache[chat_id] = {
-            "settings": user_data[5],
-            "current_page": 0,
-            "is_new": True,
-            "timestamp": time.time()
-        }
-    else:
-        # Создаем новую запись для пользователя в базе данных, если его нет
-        if not user_data:
-            db_manager.add_user(user.id, user.username, user.first_name, user.last_name, message.from_user.language_code)
-        db_manager.add_user_settings(user.id, json.dumps(settings_def))
-        cache[chat_id] = {
-            "settings": settings_def,
-            "current_page": 0,
-            "is_new": True,
-            "timestamp": time.time()
-        }
+    await check_cache( chat_id, message )
+
     encoded_settings = base64.urlsafe_b64encode(json.dumps(cache[chat_id]["settings"]).encode()).decode()
     url = f"https://denser-ru.github.io/ars_bot_webapp/settings.html?settings={encoded_settings}"
     # web_app_button = InlineKeyboardButton(text="Открыть настройки",
@@ -125,6 +138,7 @@ async def start(message: aiogram.types.Message):
     kb = [
         [
             types.KeyboardButton(text="/start"),
+            types.KeyboardButton(text="/search"),
             types.KeyboardButton(text="/settings", web_app=WebAppInfo(url=url)),
             types.KeyboardButton(text="/currency")
         ],
@@ -145,20 +159,14 @@ async def handle_web_app_data(message: types.Message):
     data = json.loads(message.web_app_data.data)
     logger.debug(f"Получены данные:{data}")
     chat_id = message.chat.id
-    if chat_id in cache:
-        cache[chat_id]["settings"] = data
-    else:
-        cache[chat_id] = {
-            "settings": data,
-            "current_page": 0,
-            "is_new": True,
-            "timestamp": time.time()
-        }
+    await check_cache( chat_id, message )
+    cache[chat_id]["settings"] = data
     encoded_settings = base64.urlsafe_b64encode(json.dumps(cache[chat_id]["settings"]).encode()).decode()
     url = f"https://denser-ru.github.io/ars_bot_webapp/settings.html?settings={encoded_settings}"
     kb = [
         [
             types.KeyboardButton(text="/start"),
+            types.KeyboardButton(text="/search"),
             types.KeyboardButton(text="/settings", web_app=WebAppInfo(url=url)),
             types.KeyboardButton(text="/currency")
         ],
@@ -187,20 +195,31 @@ async def cmd_search(
         message: types.Message,
         command: CommandObject
         ):
+
+    chat_id = message.chat.id
+    await check_cache( chat_id, message )
+
+    # Поиск сообщений
+    await search( chat_id, message, command.args )
+
+async def search( chat_id, message, command_args ):
     # Если не переданы никакие аргументы, то
     # command.args будет None
-    if command.args is None:
-        await message.reply(
-            "Ошибка: не переданы аргументы"
-        )
-        return
-    chat_id = message.chat.id
 
     # Логируем действие пользователя "поиск"
-    db_manager.log_user_action(message.from_user.id, "search", command.args)
+    db_manager.log_user_action(message.from_user.id, "search", command_args)
+    cache[chat_id]["is_new"] = True
+
+    if command_args is None:
+        await message.reply(
+            "Напишите ваш текст поискового запроса следующим сообщением:"
+        )
+        # Установка флага ожидания ввода поискового запроса
+        cache[chat_id]["wait"] = "search"
+        return
 
     results = mv.search_query(
-        command.args,
+        command_args,
         start_date=cache[chat_id]["settings"]["start_date"],
         end_date=cache[chat_id]["settings"]["end_date"],
         sorting=cache[chat_id]["settings"]["sort_by"],
@@ -209,22 +228,11 @@ async def cmd_search(
     # Выведите результаты поиску на экран или в файл
 
     # Кэширование результатов
-    
-    if chat_id in cache:
-        set_settings = cache[chat_id]["settings"]
-    else:
-        set_settings = settings_def
-    cache[chat_id] = {
-        "search_query": command.args,
-        "results": results[:50],
-        "settings": set_settings,
-        "current_page": 0,
-        "is_new": True,
-        "timestamp": time.time()
-    }
-
+    cache[chat_id]["search_query"] = command_args
+    cache[chat_id]["results"] = results[:50]
+    cache[chat_id]["wait"] = None
     # Отображение первой страницы результатов
-    await display_results_page(message, chat_id, 0)
+    await display_results_page( message, chat_id, 0 )
 
 async def display_results_page(message, chat_id, page_number):
     # Проверка срока жизни кэша
@@ -280,11 +288,6 @@ async def cmd_news(message: types.Message):
 @dp.message( Command( "currency" ) )
 async def cmd_currency( message: types.Message ):
     rates_sources = rdc.get_sourses()
-    # Преобразование в словарь
-    # rates_sources_dict = {source: rate for source, rate in rates_sources}
-    # rates_sources_dict = dict( rates_sources )
-    # logger.debug( f"rates_sources: { rates_sources_dict }" )
-    # Проход по словарю
 
     # Логируем действие пользователя "получение курса валют"
     db_manager.log_user_action(message.from_user.id, "currency")
@@ -304,15 +307,21 @@ async def cmd_currency( message: types.Message ):
 # Обработчик всех сообщений, которое не является командой и не определённых команд
 @dp.message()
 async def handle_message(message: types.Message):
+    chat_id = message.chat.id
+    await check_cache( chat_id, message )
     # Проверяем тип сообщения
     if message.content_type == 'text':
         # Обрабатываем текстовое сообщение
         if message.text.startswith('/'):
             command = message.text.split()[0]
             db_manager.log_user_action(message.from_user.id, "unknown_command", message.text)
-            await message.reply("Извини, я не знаю такой команды. Попробуй ещё раз.")
+            await message.reply(f"Извини, я не знаю такой команды <code>{ command }</code>. Попробуй ещё раз.", parse_mode='HTML')
         else:
-            db_manager.log_user_action(message.from_user.id, "message", message.text)
+            if chat_id in cache and cache[chat_id]["wait"] == "search":
+                cache[chat_id]["is_new"] = True
+                await search( chat_id, message, message.text )
+            else:
+                db_manager.log_user_action(message.from_user.id, "message", message.text)
     else:
         # Обрабатываем другие типы сообщений
         content_type = message.content_type

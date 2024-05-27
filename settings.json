@@ -1,6 +1,8 @@
 {
     "scan_interval": 0,
     "DEBUG": 1,
+    "DEV": 0,
+    "CACHE_TTL": 900,
     "tmp_dir": "./tmp/",
     "GEMINI_API_KEY": "AIzaSyDervOzi5w7GYyBGVbXA6JyzqZ2lEFC4oY",
     "number_msgs": 5,
@@ -12,5 +14,7 @@
         "user": "postgres",
         "password": "postgres",
         "dbname": "postgres"
-    }
+    },
+    "bot_key": "6704611209:AAEPk5dX1NPkqS3RBuC6Q0DeiwsJncR_7U8",
+    "bot_dev_key": "6928736119:AAGU5LTz0WOEHZLxot3ug6xe69WO9Bp_4K8"
 }
