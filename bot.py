@@ -98,49 +98,18 @@ async def check_cache( chat_id, message ):
                 "timestamp": time.time()
             }
 
-
-# Создаем функцию-обработчик для команды /start
-@dp.message(Command("start")) # Используем фильтр Command вместо декоратора command_handler
-async def start(message: aiogram.types.Message):
-    # Приветствуем пользователя
-    start_text = f"""<b>Хочешь быть в курсе всех событий в Аргентине? 🇦🇷</b>
-
-<b>ARS Inform — это твой личный гид по всему, что происходит в Аргентине!</b>
-
-<b>Я найду для тебя:</b>
-
-* <b>Самые свежие новости и обсуждения:</b> От футбола до политики,  узнай все, что тебя интересует! ⚽️📰
-* <b>Отзывы о лучших ресторанах, достопримечательностях и многом другом:</b>  Ищешь идеальное место для ужина в Буэнос-Айресе или хочешь узнать, как получить визу? Я помогу! 🍽️🗺️
-* <b>Актуальный курс аргентинского песо:</b>  Следи за выгодными предложениями по обмену валют! 💸
-
-<b>ARS Inform использует передовые технологии векторного поиска, чтобы находить информацию, даже если ты не знаешь точных ключевых слов.  Например, вместо того, чтобы искать "лучшие рестораны Буэнос-Айреса", ты можешь просто написать "вкусные места в Буэнос-Айресе" и я пойму, что ты хочешь!</b>
-
-<b>Не трать время на долгий поиск в интернете! ARS Inform  найдет информацию за тебя!</b>
-
-<b>Начни использовать меня прямо сейчас!</b>
-
-* <b>Введи свой вопрос:</b>  Задай мне вопрос об Аргентине! 🤔
-* <b>Используй команду /search:</b>  Например, `/search лучшие рестораны Буэнос-Айреса`  или `/search как получить визу в Аргентину` 🔎
-* <b>Попробуй также команды:</b> `/news`, `/currency`.
-
-<b>Я буду рад тебе помочь! 😊</b>"""
-
-    # метод row позволяет явным образом сформировать ряд
-    # из одной или нескольких кнопок.
-    chat_id = message.chat.id
-
-    await check_cache( chat_id, message )
-
+def make_kb( chat_id ):
     encoded_settings = base64.urlsafe_b64encode(json.dumps(cache[chat_id]["settings"]).encode()).decode()
     url = f"https://denser-ru.github.io/ars_bot_webapp/settings.html?settings={encoded_settings}"
-    # web_app_button = InlineKeyboardButton(text="Открыть настройки",
-    #                                   web_app=WebAppInfo(url="https://your-web-app-url.com"))
     kb = [
         [
             types.KeyboardButton(text="/start"),
             types.KeyboardButton(text="/search"),
-            types.KeyboardButton(text="/settings", web_app=WebAppInfo(url=url)),
             types.KeyboardButton(text="/currency")
+        ],
+        [
+            types.KeyboardButton(text="/settings", web_app=WebAppInfo(url=url)),
+            types.KeyboardButton(text="/help")
         ],
     ]
     keyboard = types.ReplyKeyboardMarkup(
@@ -148,6 +117,32 @@ async def start(message: aiogram.types.Message):
         resize_keyboard=True,
         input_field_placeholder="Выберите команду"
     )
+    return keyboard
+
+
+# Создаем функцию-обработчик для команды /start
+@dp.message(Command("start")) # Используем фильтр Command вместо декоратора command_handler
+async def start(message: aiogram.types.Message):
+    # Приветствуем пользователя
+    start_text = """\
+<b>¡Hola! 👋  Я - ARS Inform, твой аргентинский друг в мире информации.</b> 🇦🇷  
+
+🔎 <i>Использую силу искусственного интеллекта, чтобы находить для тебя самую релевантную информацию об Аргентине.</i> 
+
+Хочешь узнать последние новости? 📰 Найти уютный ресторанчик или спланировать путешествие? ✈️  А может, интересуешься курсом песо? 💸  
+
+Просто напиши мне свой вопрос, как другу. 😉
+
+💡 <i>Хочешь узнать больше? Жми /help!</i>
+"""
+
+    # метод row позволяет явным образом сформировать ряд
+    # из одной или нескольких кнопок.
+    chat_id = message.chat.id
+
+    await check_cache( chat_id, message )
+
+    keyboard = make_kb( chat_id )
 
     db_manager.log_user_action(message.from_user.id, "start")
 
@@ -161,21 +156,8 @@ async def handle_web_app_data(message: types.Message):
     chat_id = message.chat.id
     await check_cache( chat_id, message )
     cache[chat_id]["settings"] = data
-    encoded_settings = base64.urlsafe_b64encode(json.dumps(cache[chat_id]["settings"]).encode()).decode()
-    url = f"https://denser-ru.github.io/ars_bot_webapp/settings.html?settings={encoded_settings}"
-    kb = [
-        [
-            types.KeyboardButton(text="/start"),
-            types.KeyboardButton(text="/search"),
-            types.KeyboardButton(text="/settings", web_app=WebAppInfo(url=url)),
-            types.KeyboardButton(text="/currency")
-        ],
-    ]
-    keyboard = types.ReplyKeyboardMarkup(
-        keyboard=kb,
-        resize_keyboard=True,
-        input_field_placeholder="Выберите команду"
-    )
+
+    keyboard = make_kb( chat_id )
 
         # Сохраняем настройки пользователя в базу данных
     db_manager.update_user_settings(chat_id, json.dumps(data))
@@ -185,10 +167,34 @@ async def handle_web_app_data(message: types.Message):
     # await message.answer(f"Новые настройки сохранены": {message.web_app_data.data}", reply_markup=keyboard)
     await message.answer("Новые настройки сохранены", reply_markup=keyboard)
 
-@dp.message(Command("resume"))
+@dp.message(Command("help"))
 async def cmd_resume(message: types.Message):
-    db_manager.log_user_action(message.from_user.id, "resume")
-    await message.reply("Команда <code>/resume</code> пока ещё в разработке", parse_mode='HTML')
+    db_manager.log_user_action(message.from_user.id, "help")
+    help_text = """\
+<b>ARS Inform - твой гид по Аргентине!</b> 🇦🇷
+
+<b>Что я умею?</b>
+
+• <i>Нахожу ответы на твои вопросы:</i> Спрашивай меня о чем угодно, связанном с Аргентиной! Я использую искусственный интеллект для понимания твоих запросов и поиска максимально релевантной информации.
+• <i>Делюсь последними новостями:</i> Узнай, что происходит в Аргентине прямо сейчас! (в разработке)
+• <i>Помогаю спланировать путешествие:</i>  Найду лучшие места для отдыха, расскажу о достопримечательностях и помогу с визой.
+• <i>Сообщаю актуальный курс валют:</i>  Будь в курсе последних изменений курса аргентинского песо.
+
+<b>Как пользоваться?</b>
+
+• <i>Просто напиши мне свой вопрос.</i> Не стесняйся использовать естественный язык, я тебя пойму! 
+• <i>Используй команды:</i>
+    • /start - начать работу с ботом
+    • /search - поиск по ключевым словам (например, <code>/search лучшие рестораны Буэнос-Айреса</code>)
+    • /news - последние новости (в разработке)
+    • /currency - актуальный курс валют 
+    • /settings - настройка параметров поиска: 
+        • Вы можете указать временной диапазон для поиска информации. 
+        • Выберите, как сортировать результаты: по релевантности или по дате.
+
+<b>ARS Inform - твой надежный помощник в мире информации об Аргентине!</b> 
+"""
+    await message.reply( help_text, parse_mode='HTML' )
 
 @dp.message(Command("search"))
 async def cmd_search(
