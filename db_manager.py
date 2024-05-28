@@ -1,6 +1,15 @@
 # db_manager.py
 import psycopg2
 
+# Импортируем модуль logging
+import logging
+root_logger = logging.getLogger("bot")
+# Создаем дочерний логгер с именем scaner.tv
+logger = logging.getLogger("bot.dbmanager")
+logger.propagate = True
+# Устанавливаем уровень логирования для дочернего логгера
+logger.setLevel(logging.DEBUG)
+
 class DBManager:
     def __init__(self, config, dbname="exchange_rates"):
         self.config = config
