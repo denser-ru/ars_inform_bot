@@ -13,6 +13,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from search import MessagesVectorizer
 from binance_data_collector import RatesDataCollector
 from db_manager import DBManager
+from llm_helper import LLMHelper
+
 
 # Импортируем настроки журналирования из файла logger.py
 from logger import logger
@@ -35,8 +37,10 @@ settings = get_conf()
 # Получаем токен бота из @BotFather
 if settings["DEV"]:
     TOKEN = settings["bot_dev_key"]
+    GROQ_API_KEY = settings["GROQ_API_KEY_DEV"]
 else:
     TOKEN = settings["bot_key"]
+    GROQ_API_KEY = settings["GROQ_API_KEY"]
 
 # Словарь для кэширования результатов поиска
 cache = {}
@@ -68,6 +72,18 @@ rdc = RatesDataCollector(settings["db_config"])
 # Создаем объект DBManager
 # для тестового бота дабаз: "exchange_rates_dev"
 db_manager = DBManager( settings["db_config"], dbname="exchange_rates_dev" if settings["DEV"] else "exchange_rates" )
+
+# Описание бота для LLM
+bot_description = """\
+You are a helpful assistant. You always answer in Russian.
+Ты - ARS Inform, Telegram-бот, созданный для предоставления информации об Аргентине. 
+Твоя задача - помогать пользователям получать информацию об Аргентине, 
+отвечая на их вопросы и выполняя релевантные действия. 
+
+**Всегда будь вежливым и дружелюбным в общении с пользователями.**
+"""
+# Инициализация LLMHelper
+llm_helper = LLMHelper(GROQ_API_KEY, settings["GROQ_MODEL"], bot_description)
 
 async def check_cache( chat_id, message ):
     if chat_id in cache:
@@ -168,7 +184,7 @@ async def handle_web_app_data(message: types.Message):
     await message.answer("Новые настройки сохранены", reply_markup=keyboard)
 
 @dp.message(Command("help"))
-async def cmd_resume(message: types.Message):
+async def cmd_help(message: types.Message):
     db_manager.log_user_action(message.from_user.id, "help")
     help_text = """\
 <b>ARS Inform - твой гид по Аргентине!</b> 🇦🇷
@@ -214,6 +230,8 @@ async def search( chat_id, message, command_args ):
 
     # Логируем действие пользователя "поиск"
     db_manager.log_user_action(message.from_user.id, "search", command_args)
+    if not chat_id in cache:
+        await check_cache( chat_id, message )
     cache[chat_id]["is_new"] = True
 
     if command_args is None:
@@ -328,10 +346,39 @@ async def handle_message(message: types.Message):
                 await search( chat_id, message, message.text )
             else:
                 db_manager.log_user_action(message.from_user.id, "message", message.text)
+                # Вызов LLM для обработки текста, не являющегося командой
+                llm_response = await llm_helper.process_user_input(message.text)
+
+                # Обработка ответа LLM
+                if llm_response is not None:
+                    # Проверяем, является ли ответ вызовом функции или текстом
+                    if isinstance(llm_response, dict) and "name" in llm_response:
+                        await process_llm_response(message, llm_response) 
+                    else:
+                        # Ответ - это просто текст
+                        await message.reply(llm_response)
+                # else:
+                    # ... (обработка случая, когда LLM вернул None) ..
     else:
         # Обрабатываем другие типы сообщений
         content_type = message.content_type
         db_manager.log_user_action(message.from_user.id, content_type)
+
+
+async def process_llm_response(message, llm_response):
+    #  Эта функция теперь вызывается только если LLM выбрал функцию
+    function_name = llm_response.get("name")
+    function_args = llm_response.get("content")
+
+    chat_id = message.chat.id
+    if function_name == "search_information":
+        await search(chat_id, message, function_args)
+    elif function_name == "about_bot":
+        await cmd_help( message )
+    elif function_name == "currency":
+        await cmd_currency( message )
+    # ... (обработка других функций) ..
+
 
 
 @dp.callback_query(F.data == "random_value")

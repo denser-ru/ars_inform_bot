@@ -5,3 +5,4 @@ feedparser
 torch
 transformers
 psycopg2
+groq

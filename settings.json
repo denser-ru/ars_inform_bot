@@ -16,5 +16,8 @@
         "dbname": "postgres"
     },
     "bot_key": "6704611209:AAEPk5dX1NPkqS3RBuC6Q0DeiwsJncR_7U8",
-    "bot_dev_key": "6928736119:AAGU5LTz0WOEHZLxot3ug6xe69WO9Bp_4K8"
+    "bot_dev_key": "6928736119:AAGU5LTz0WOEHZLxot3ug6xe69WO9Bp_4K8",
+    "GROQ_API_KEY_DEV": "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",
+    "GROQ_API_KEY": "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",
+    "GROQ_MODEL": "llama3-70b-8192"
 }
