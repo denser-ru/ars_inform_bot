@@ -255,6 +255,7 @@ async def search( chat_id, message, command_args ):
     cache[chat_id]["search_query"] = command_args
     cache[chat_id]["results"] = results[:50]
     cache[chat_id]["wait"] = None
+    cache[chat_id]["timestamp"] = time.time()
     # Отображение первой страницы результатов
     await display_results_page( message, chat_id, 0 )
 
