@@ -1,5 +1,4 @@
-from groq import Groq
-import json
+import json, requests
 
 # Импортируем модуль logging
 import logging
@@ -12,9 +11,14 @@ logger.setLevel(logging.DEBUG)
 
 class LLMHelper:
     def __init__(self, api_key, model, bot_description):
-        self.client = Groq(api_key=api_key)
+        self.api_key = api_key
         self.model = model
         self.bot_description = bot_description
+        self.url = 'https://api.groq.com/openai/v1/chat/completions'
+        self.headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {api_key}'
+        }
         self.tools = [
             {
                 "type": "function",
@@ -75,61 +79,56 @@ class LLMHelper:
 
     async def process_user_input(self, message_text):
         try:
-            messages=[
-                {"role": "system", "content": self.bot_description},
-                {"role": "user", "content": message_text},
-            ]
+            data = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": self.bot_description},
+                    {"role": "user", "content": message_text},
+                ],
+                "tools": self.tools,
+                "tool_choice": "auto",
+                "max_tokens": 4096,
+            }
 
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=self.tools,
-                tool_choice="auto", # Модель сама решает, вызывать ли функцию
-                max_tokens=4096  # Ограничение количества токенов в ответе
-            )
+            response = requests.post(self.url, headers=self.headers, json=data)
+            response.raise_for_status()  # Проверяем на ошибки HTTP
 
-            response_message = response.choices[0].message
+            response_json = response.json()
+            response_message = response_json['choices'][0]['message']
 
             # Проверяем, был ли сделан вызов функции
-            tool_calls = response_message.tool_calls
+            tool_calls = response_message.get('tool_calls')
             if tool_calls:
                 # Вызываем функцию и получаем результат
-                function_response = await self.call_function(tool_calls[0], messages)
-                # Отправляем результат функции обратно в модель для формирования окончательного ответа
-                # messages.append(function_response)
-                # second_response = self.client.chat.completions.create(
-                #     model=self.model,
-                #     messages=messages,
-                # )
-                # return second_response.choices[0].message.content
+                function_response = await self.call_function(tool_calls[0], data['messages'])
                 return function_response
             else:
-                return response_message.content
+                return response_message.get('content')
 
         except Exception as e:
             logger.error(f"Ошибка при вызове LLM: {e}")
             return None
 
     async def call_function(self, tool_call, messages):
-        function_name = tool_call.function.name
-        function_args = json.loads(tool_call.function.arguments)
-        
+        function_name = tool_call['function']['name']
+        function_args = json.loads(tool_call['function']['arguments'])
+
         # Вызываем соответствующую функцию бота 
         if function_name == "search_information":
             query = function_args.get("query")
             # ... (код для вызова функции поиска и получения результата)
             results = "Здесь будет результат поиска" # Замените на реальный результат
             return {
-                "tool_call_id": tool_call.id,
+                "tool_call_id": tool_call['id'],
                 "role": "tool",
                 "name": function_name,
-                "content": query, 
+                "content": query,
             }
         # ... (обработка других функций) ...
 
         # Если функция не найдена
         return {
-            "tool_call_id": tool_call.id,
+            "tool_call_id": tool_call['id'],
             "role": "tool",
             "name": function_name,
             "content": f"Ошибка: функция '{function_name}' не найдена.", 
