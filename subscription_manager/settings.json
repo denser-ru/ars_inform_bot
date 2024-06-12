@@ -1,0 +1,18 @@
+{
+    "scan_interval": 0,
+    "DEBUG": 1,
+    "DEV": 1,
+    "CACHE_TTL": 900,
+    "number_msgs": 5,
+    "number_words": 30,
+    "db_config":
+        {
+        "host": "ars_inform_bd",
+        "port": 5432,
+        "user": "postgres",
+        "password": "postgres",
+        "dbname": "postgres"
+    },
+    "webhook_host": "http://ars_inform_bot_dev",
+    "webhook_port": 8080
+}

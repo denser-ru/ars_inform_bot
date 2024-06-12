@@ -1,3 +1,5 @@
 aiogram
 requests
 psycopg2
+aiohttp
+numpy

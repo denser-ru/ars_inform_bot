@@ -73,6 +73,19 @@ CREATE TABLE IF NOT EXISTS user_actions (
     parameters TEXT,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE EXTENSION vector;
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+    user_id BIGINT PRIMARY KEY,
+    chat_id BIGINT,
+    query TEXT NOT NULL,
+    query_vector VECTOR(1024),
+    priority INT DEFAULT 5,
+    threshold REAL DEFAULT 0.8, 
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
     """
     
     # Выполняем SQL скрипт

@@ -1,5 +1,6 @@
 import psycopg2, requests, json
 from datetime import datetime
+import numpy as np
 
 
 # Импортируем модуль logging
@@ -216,4 +217,19 @@ score: {score}
             messages_info.append(text)
         # Вернем список messages_info как результат функции
         return messages_info
+    
+    def calculate_similarity(self, vector1: np.array, vector2: np.array) -> float:  #  Указываем тип данных np.array
+        """
+        Вычисляет косинусное сходство между двумя векторами.
+
+        Args:
+            vector1: Первый вектор.
+            vector2: Второй вектор.
+
+        Returns:
+            Значение косинусного сходства (от 0.0 до 1.0).
+        """
+        from numpy import dot
+        from numpy.linalg import norm
+        return dot(vector1, vector2)/(norm(vector1)*norm(vector2))
     

@@ -9,15 +9,16 @@ from aiogram.filters import CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram import F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiohttp import web
 
-from search import MessagesVectorizer
-from binance_data_collector import RatesDataCollector
-from db_manager import DBManager
-from llm_helper import LLMHelper
+from utils.search import MessagesVectorizer
+from utils.binance_data_collector import RatesDataCollector
+from utils.db_manager import DBManager
+from utils.llm_helper import LLMHelper
 
 
 # Импортируем настроки журналирования из файла logger.py
-from logger import logger
+from utils.logger import logger
 # Устанавливаем минимальный уровень важности для логгера равным DEBUG
 logger.setLevel(logging.DEBUG)
 
@@ -380,6 +381,29 @@ async def process_llm_response(message, llm_response):
         await cmd_currency( message )
     # ... (обработка других функций) ..
 
+async def handle_notification(request: web.Request):
+    """Обработчик уведомлений от менеджера рассылки."""
+    try:
+        data = await request.json()
+        user_id = data.get("user_id")
+        message = data.get("message")
+
+        if user_id is None or message is None:
+            return web.Response(status=400, text="Missing user_id or message")
+
+        await bot.send_message(chat_id=user_id, text=message, parse_mode='HTML')
+        return web.Response(status=200, text="Notification sent successfully")
+    except Exception as e:
+        logger.error(f"Ошибка при обработке уведомления: {e}")
+        return web.Response(status=500, text="Error processing notification")
+
+app = web.Application()
+app.add_routes([web.post('/notification', handle_notification)])  
+
+async def on_startup(app):
+    logger.info("Бот запущен")
+
+app.on_startup.append(on_startup)
 
 
 @dp.callback_query(F.data == "random_value")
@@ -394,4 +418,5 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # web.run_app(app, host='0.0.0.0', port=settings['webhook_port'])
+    web.run_app(app)

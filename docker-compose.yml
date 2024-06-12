@@ -13,6 +13,26 @@ services:
       - "host.docker.internal:host-gateway"
     # network_mode: host
 
+  # Сервис для менеджера рассылки
+  ars_inform_subscription_manager_dev:
+    build:
+      context: .  # Используем тот же контекст, что и для бота
+      dockerfile: Dockerfile.sm  # Указываем Dockerfile для менеджера
+    networks:
+      - app-network
+    container_name: subscription_manager_dev
+    volumes:
+      - ./subscription_manager:/app  # Монтируем ту же папку с кодом, что и для бота
+      - ./utils:/app/utils
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # environment:
+    #   - DB_HOST=...  # Укажите параметры подключения к БД
+    #   - DB_NAME=...
+    #   - DB_USER=...
+    #   - DB_PASSWORD=...
+    #   - WEBHOOK_HOST=http://ars_inform_bot_dev  # URL вебхука бота 
+
 
 # Определяем сеть для связи между сервисами
 networks:
