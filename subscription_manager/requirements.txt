@@ -1,0 +1,6 @@
+aiohttp
+aiogram
+requests
+psycopg2-binary
+apscheduler
+numpy
