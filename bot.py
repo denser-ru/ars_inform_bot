@@ -10,14 +10,18 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram import F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
-from search import MessagesVectorizer
-from binance_data_collector import RatesDataCollector
-from db_manager import DBManager
-from llm_helper import LLMHelper
+import uvicorn
+from fastapi import FastAPI, HTTPException, Header
+from pydantic import BaseModel
+
+from utils.search import MessagesVectorizer
+from utils.binance_data_collector import RatesDataCollector
+from utils.db_manager import DBManager
+from utils.llm_helper import LLMHelper
 
 
 # Импортируем настроки журналирования из файла logger.py
-from logger import logger
+from utils.logger import logger
 # Устанавливаем минимальный уровень важности для логгера равным DEBUG
 logger.setLevel(logging.DEBUG)
 
@@ -61,6 +65,8 @@ async def bot_test(bot):
     except Exception as e:
         logger.debug(f"Ошибка подключения бота: {e}")
 
+# API для отправки сообщений через бота
+app = FastAPI()
 # Объект бота
 bot = Bot(token=TOKEN)
 # Диспетчер
@@ -380,9 +386,40 @@ async def process_llm_response(message, llm_response):
         await cmd_currency( message )
     # ... (обработка других функций) ..
 
+class MessageData(BaseModel):  # Модель для данных сообщения
+    chat_id: int
+    message_text: str
 
+@app.post("/send_message")
+async def send_message(message_data: MessageData, api_token: str = Header(None, alias="Authorization")):  # <-- Принимаем данные сообщения
+    # Проверяем наличие заголовка Authorization
+    if api_token is None:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
 
-@dp.callback_query(F.data == "random_value")
+    # Извлекаем токен из заголовка
+    parts = api_token.split(" ")
+    if len(parts) != 2 or parts[0].lower() != "bearer": #<-- Добавлена эта проверка
+        raise HTTPException(status_code=401, detail="Invalid Authorization header format")
+
+    api_token = parts[1]
+
+    # Сравниваем токен БЕЗ "Bearer "
+    if api_token != 'YOUR_SECRET_TOKEN': 
+        print(f"api_token: {api_token}")
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        await bot.send_message(chat_id=message_data.chat_id, text=message_data.message_text)  # <-- Используем данные из объекта
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.on_event("startup") 
+async def startup_event():
+    """Функция запускается при старте приложения"""
+    print("Бот запущен!")
+
+@dp.callback_query( F.data == "random_value" )
 async def send_random_value(callback: types.CallbackQuery):
     await callback.message.answer(str(randint(1, 10)))
 
@@ -390,8 +427,18 @@ async def send_random_value(callback: types.CallbackQuery):
 async def main():
     # Сначала проверяем соединение бота
     await bot_test(bot)
+    # # Затем начинаем поллинг
+    # await dp.start_polling(bot)
+
     # Затем начинаем поллинг
-    await dp.start_polling(bot)
+    asyncio.create_task(dp.start_polling(bot)) 
+
+    # Создание конфигурации сервера uvicorn
+    config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="info")
+    server = uvicorn.Server(config)
+
+    # Запуск сервера в отдельной задаче asyncio
+    await server.serve()
 
 if __name__ == "__main__":
     asyncio.run(main())
