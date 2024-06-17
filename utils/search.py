@@ -1,5 +1,6 @@
 import psycopg2, requests, json
 from datetime import datetime
+import numpy as np
 
 
 # Импортируем модуль logging
@@ -216,4 +217,18 @@ score: {score}
             messages_info.append(text)
         # Вернем список messages_info как результат функции
         return messages_info
-    
+
+    def calculate_similarity(self, vector1, vector2) -> float:
+        """
+        Вычисляет косинусное сходство.
+        """
+        from numpy import dot
+        from numpy.linalg import norm
+        
+        if not isinstance(vector1, str) or not isinstance(vector2, str):
+            raise TypeError("Ожидается строковый тип данных для векторов.")
+        
+        # Преобразование строки в список внутри функции
+        vector1 = np.array(json.loads(vector1)).astype(float)
+        vector2 = np.array(json.loads(vector2)).astype(float)
+        return dot(vector1, vector2) / (norm(vector1) * norm(vector2))

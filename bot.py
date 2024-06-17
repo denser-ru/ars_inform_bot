@@ -404,7 +404,7 @@ async def send_message(message_data: MessageData, api_token: str = Header(None, 
     api_token = parts[1]
 
     # Сравниваем токен БЕЗ "Bearer "
-    if api_token != 'YOUR_SECRET_TOKEN': 
+    if api_token != settings["fastapi_token"]: 
         print(f"api_token: {api_token}")
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -434,7 +434,7 @@ async def main():
     asyncio.create_task(dp.start_polling(bot)) 
 
     # Создание конфигурации сервера uvicorn
-    config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="info")
+    config = uvicorn.Config(app, host=settings["fastapi_host"], port=settings["fastapi_port"], log_level="info")
     server = uvicorn.Server(config)
 
     # Запуск сервера в отдельной задаче asyncio

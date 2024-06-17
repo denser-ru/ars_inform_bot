@@ -20,6 +20,7 @@
     "GROQ_API_KEY_DEV": "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",
     "GROQ_API_KEY": "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",
     "GROQ_MODEL": "llama3-70b-8192",
-    "webhook_host": "http://ars_inform_bot_dev",
-    "webhook_port": 8080
+    "fastapi_host": "0.0.0.0",
+    "fastapi_port": 8080,
+    "fastapi_token": "ARS_INFORM_BOT.DEV"
 }

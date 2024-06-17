@@ -8,13 +8,16 @@ from utils.search import MessagesVectorizer
 import json
 import aiohttp
 import logging
+import numpy as np
 
 # Настройка логгера
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+settings = {}
+
 class SubscriptionManager:
-    def __init__(self, db_config: dict, vectorizer: MessagesVectorizer, bot_webhook_url: str):
+    def __init__(self, db_config: dict, vectorizer: MessagesVectorizer, bot_webhook_url: str, bot_webhook_token: str):
         """
         Инициализирует SubscriptionManager.
 
@@ -26,27 +29,26 @@ class SubscriptionManager:
         self.db_manager = DBManager(db_config, dbname='postgres')
         self.vectorizer = vectorizer
         self.bot_webhook_url = bot_webhook_url
+        self.bot_webhook_token = bot_webhook_token
         self.notification_queue = PriorityQueue()
         self.scheduler = AsyncIOScheduler()
-        self.scheduler.add_job(self.process_notifications, "interval", seconds=10)
+        self.scheduler.add_job(self.process_notifications, "interval", seconds=60)
         self.scheduler.start()
         self.rate_limits = {
-            1: timedelta(seconds=10),
-            2: timedelta(minutes=1),
-            3: timedelta(minutes=5),
+            1: timedelta(seconds=60),
+            2: timedelta(minutes=5),
+            3: timedelta(minutes=15),
             4: timedelta(hours=1),
-            5: timedelta(hours=24)
+            5: timedelta(hours=3)
         }
         self.last_notification_times = {}
 
     async def process_new_messages(self, new_messages: List[Dict[str, int]]):
-        """
-        Обрабатывает новые сообщения и добавляет уведомления в очередь.
-
-        Args:
-            new_messages: Список новых сообщений в формате [{"message_id": 1234, "group_id": -5678}, ...]
-        """
         subscriptions = self.db_manager.get_all_subscriptions()
+        
+        # Преобразование списка кортежей в список словарей
+        subscriptions = [dict(zip([column[0] for column in self.db_manager.db_cursor.description], row)) for row in subscriptions]
+        
         for subscription in subscriptions:
             relevant_messages = await self.find_relevant_messages(subscription, new_messages)
             if relevant_messages:
@@ -63,15 +65,19 @@ class SubscriptionManager:
         Returns:
             Список релевантных сообщений или пустой список, если таковых нет.
         """
+        logger.info("Обрабатываем новые сообщения")
         relevant_messages = []
         for new_message in new_messages:
+            logger.info(f"Новое сообщение: { new_message }")
             message_data = self.db_manager.get_message(new_message["message_id"], new_message["group_id"])
+            logger.info(f"message_data: { message_data }")
             if message_data:
                 logger.debug(f"message_data: {message_data}")
                 message_vector = self.db_manager.get_vector(new_message["message_id"], new_message["group_id"])  #  Получаем вектор
                 if message_vector:
                     similarity = self.vectorizer.calculate_similarity(subscription["query_vector"], message_vector)
-                    if similarity >= subscription["threshold"]:
+                    logger.info(f"Сходство: { similarity }")
+                    if similarity <= subscription["threshold"]:
                         relevant_messages.append(message_data)
         return relevant_messages
 
@@ -85,9 +91,14 @@ class SubscriptionManager:
             priority: Приоритет уведомления.
         """
         current_time = datetime.now()
-        last_notification_time = self.last_notification_times.get(user_id)
 
-        if last_notification_time is None or (current_time - last_notification_time) >= self.rate_limits[priority]:
+        # Инициализация значения для ключа, если его нет в словаре
+        if user_id not in self.last_notification_times:
+            self.last_notification_times[user_id] = current_time - self.rate_limits[priority]  # Разрешаем первое уведомление
+
+        last_notification_time = self.last_notification_times[user_id] 
+
+        if (current_time - last_notification_time) >= self.rate_limits[priority]:
             self.notification_queue.put((priority, {"user_id": user_id, "messages": messages}))
             self.last_notification_times[user_id] = current_time
         else:
@@ -110,15 +121,23 @@ class SubscriptionManager:
                 logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {e}")
 
     async def send_message_to_user(self, user_id: int, message: str):
-        """Отправляет сообщение пользователю через вебхук бота."""
+        """Отправляет сообщение пользователю через новый endpoint бота."""
         try:
+            url = self.bot_webhook_url  #  URL вашего endpoint
+            headers = {"Authorization": f"Bearer { self.bot_webhook_token }"}
+            data = {"chat_id": user_id, "message_text": message}
             async with aiohttp.ClientSession() as session:
-                await session.post(self.bot_webhook_url, json={"user_id": user_id, "message": message})
-            logger.info(f"Уведомление отправлено пользователю {user_id}")
+                async with session.post(url, headers=headers, json=data) as response:
+                    response_text = await response.text()
+                    if response.status != 200:
+                        logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {response_text}")
+                        logger.error(f"url: {url}")
+                    else:
+                        logger.info(f"Уведомление отправлено пользователю {user_id}")
         except Exception as e:
             logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {e}")
 
-    async def add_subscription(self, user_id: int, chat_id: int, query: str, priority: int = 5, threshold: float = 0.8):
+    async def add_subscription(self, user_id: int, chat_id: int, query: str, priority: int = 7, threshold: float = 0.6):
         """
         Добавляет новую подписку для пользователя.
 
@@ -126,8 +145,8 @@ class SubscriptionManager:
             user_id: ID пользователя.
             chat_id: ID чата.
             query: Поисковая фраза.
-            priority: Приоритет (по умолчанию 5).
-            threshold: Порог сходства (по умолчанию 0.8).
+            priority: Приоритет (по умолчанию 3).
+            threshold: Порог сходства (по умолчанию 0.6).
         """
         query_vector = self.vectorizer.vectorize_message(query)
         try:
@@ -151,9 +170,10 @@ async def main():
         settings = json.loads(f.read())
     db_config = settings["db_config"]
     vectorizer = MessagesVectorizer(settings=settings, url='http://host.docker.internal:5123/vectorize', vector_size=1024, bot=None)
-    bot_webhook_url = f"{settings['webhook_host']}:{settings['webhook_port']}/notification"  # Замените на ваш URL
+    bot_webhook_url = f"{settings['webhook_host']}:{settings['webhook_port']}/send_message"  # Замените на ваш URL
+    bot_webhook_token = settings['webhook_token']
     
-    manager = SubscriptionManager(db_config, vectorizer, bot_webhook_url)
+    manager = SubscriptionManager(db_config, vectorizer, bot_webhook_url, bot_webhook_token)
     
     # Запускаем планировщик задач
     # В нашем случае он уже был запущен в __init__
@@ -163,10 +183,10 @@ async def main():
     await manager.process_new_messages([{'message_id': 1028, 'group_id': -1001496846806}]) 
     
     # Тестовое добавление подписки
-    await manager.add_subscription(user_id=383856771, chat_id=-1001496846806, query="поиск телеграм", priority=3, threshold=0.7)
+    await manager.add_subscription(user_id=383856771, chat_id=-1001496846806, query="поиск телеграм", priority=3, threshold=0.6)
     
     # Тестовая отправка уведомления
-    await test_send_notification(manager, user_id=123456789, message="Это тестовое уведомление!")
+    await test_send_notification(manager, user_id=383856771, message="Это тестовое уведомление! Менеджер подписок успешно запущен 😎")
     
     while True:
         await asyncio.sleep(1)  # Просто ждем

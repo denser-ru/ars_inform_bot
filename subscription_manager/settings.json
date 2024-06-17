@@ -14,5 +14,6 @@
         "dbname": "postgres"
     },
     "webhook_host": "http://ars_inform_bot_dev",
-    "webhook_port": 8080
+    "webhook_port": 8080,
+    "webhook_token": "ARS_INFORM_BOT.DEV"
 }
