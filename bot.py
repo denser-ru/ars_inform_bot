@@ -409,7 +409,7 @@ async def send_message(message_data: MessageData, api_token: str = Header(None, 
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        await bot.send_message(chat_id=message_data.chat_id, text=message_data.message_text)  # <-- Используем данные из объекта
+        await bot.send_message(chat_id=message_data.chat_id, text=message_data.message_text, parse_mode='HTML')  # <-- Используем данные из объекта
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

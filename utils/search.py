@@ -1,6 +1,5 @@
 import psycopg2, requests, json
 from datetime import datetime
-import numpy as np
 
 
 # Импортируем модуль logging
@@ -144,7 +143,6 @@ class MessagesVectorizer:
     def interpret_vector_search_result(self, result):
         # Создаем пустой список для хранения строк с информацией о сообщениях
         number_words = self.settings["number_words"]
-        messages_info = []
         messages_info_txt = ""
         # Проходим по списку кортежей с помощью цикла for
         for entry in result:
@@ -220,15 +218,22 @@ score: {score}
 
     def calculate_similarity(self, vector1, vector2) -> float:
         """
-        Вычисляет косинусное сходство.
+        Вычисляет косинусное сходство, используя оператор <-> pgvector.
+        Обрабатывает как списки, так и строки в формате pgvector.
         """
-        from numpy import dot
-        from numpy.linalg import norm
-        
-        if not isinstance(vector1, str) or not isinstance(vector2, str):
-            raise TypeError("Ожидается строковый тип данных для векторов.")
-        
-        # Преобразование строки в список внутри функции
-        vector1 = np.array(json.loads(vector1)).astype(float)
-        vector2 = np.array(json.loads(vector2)).astype(float)
-        return dot(vector1, vector2) / (norm(vector1) * norm(vector2))
+
+        # Преобразование в строковый формат pgvector при необходимости
+        if isinstance(vector1, list):
+            vector1 = '[' + ','.join(str(e) for e in vector1) + ']'
+        if isinstance(vector2, list):
+            vector2 = '[' + ','.join(str(e) for e in vector2) + ']'
+
+        # Выполнение SQL-запроса с использованием курсора, параметров и явным приведением типов
+        self.cursor.execute("SELECT %s::vector <-> %s::vector AS cosine_distance", (vector1, vector2))
+
+        # Получение результата
+        result = self.cursor.fetchone()
+        cosine_distance = result[0]
+
+        # Вернуть косинусное расстояние
+        return cosine_distance

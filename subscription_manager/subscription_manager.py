@@ -11,7 +11,7 @@ import logging
 import numpy as np
 
 # Настройка логгера
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 settings = {}
@@ -32,10 +32,10 @@ class SubscriptionManager:
         self.bot_webhook_token = bot_webhook_token
         self.notification_queue = PriorityQueue()
         self.scheduler = AsyncIOScheduler()
-        self.scheduler.add_job(self.process_notifications, "interval", seconds=60)
+        self.scheduler.add_job(self.process_notifications, "interval", seconds=10)
         self.scheduler.start()
         self.rate_limits = {
-            1: timedelta(seconds=60),
+            1: timedelta(seconds=10),
             2: timedelta(minutes=5),
             3: timedelta(minutes=15),
             4: timedelta(hours=1),
@@ -63,22 +63,25 @@ class SubscriptionManager:
             new_messages: Список новых сообщений.
 
         Returns:
-            Список релевантных сообщений или пустой список, если таковых нет.
+            Список релевантных сообщений (список словарей) или пустой список, если таковых нет.
         """
-        logger.info("Обрабатываем новые сообщения")
+        logger.debug("Обрабатываем новые сообщения")
         relevant_messages = []
         for new_message in new_messages:
-            logger.info(f"Новое сообщение: { new_message }")
+            logger.debug(f"Новое сообщение: { new_message }")
             message_data = self.db_manager.get_message(new_message["message_id"], new_message["group_id"])
-            logger.info(f"message_data: { message_data }")
+            # logger.info(f"message_data: { message_data }")
             if message_data:
-                logger.debug(f"message_data: {message_data}")
-                message_vector = self.db_manager.get_vector(new_message["message_id"], new_message["group_id"])  #  Получаем вектор
+                message_vector = self.db_manager.get_vector(new_message["message_id"], new_message["group_id"]) 
                 if message_vector:
                     similarity = self.vectorizer.calculate_similarity(subscription["query_vector"], message_vector)
-                    logger.info(f"Сходство: { similarity }")
+                    logger.debug(f"Сходство: { similarity }")
                     if similarity <= subscription["threshold"]:
-                        relevant_messages.append(message_data)
+                        # Добавляем все необходимые данные в словарь message_data
+                        message_data['score'] = similarity # добавляем score в словарь message_data
+
+                        # Добавляем словарь message_data в список relevant_messages
+                        relevant_messages.append(message_data) 
         return relevant_messages
 
     def add_notification_to_queue(self, user_id: int, messages: list, priority: int):
@@ -112,11 +115,17 @@ class SubscriptionManager:
             messages = package["messages"]
 
             try:
-                # Форматирование сообщения с результатами
-                formatted_messages = self.vectorizer.interpret_vector_search_result(messages)
+                # Форматирование сообщений с результатами
+                formatted_messages = ""
+                for message in messages:
+                    message_f = [(message['message_id'], message['group_id'], message['topic_id'], message['score'])]
+                    # Передаем message как словарь, а не как список
+                    formatted_message = self.vectorizer.interpret_vector_search_result( message_f )
+                    formatted_messages += formatted_message + "\n"
 
                 # Отправка уведомления пользователю
-                await self.send_message_to_user(user_id, f"Новые релевантные сообщения:\n{formatted_messages}")
+                await self.send_message_to_user(user_id, f"Новые релевантные сообщения подписки:\n{formatted_messages}")
+
             except Exception as e:
                 logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {e}")
 
@@ -183,7 +192,7 @@ async def main():
     await manager.process_new_messages([{'message_id': 1028, 'group_id': -1001496846806}]) 
     
     # Тестовое добавление подписки
-    await manager.add_subscription(user_id=383856771, chat_id=-1001496846806, query="поиск телеграм", priority=3, threshold=0.6)
+    await manager.add_subscription(user_id=383856771, chat_id=-1001496846806, query="поиск телеграм", priority=1, threshold=0.6)
     
     # Тестовая отправка уведомления
     await test_send_notification(manager, user_id=383856771, message="Это тестовое уведомление! Менеджер подписок успешно запущен 😎")
