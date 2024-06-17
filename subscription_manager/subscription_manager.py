@@ -8,7 +8,10 @@ from utils.search import MessagesVectorizer
 import json
 import aiohttp
 import logging
-import numpy as np
+
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 # Настройка логгера
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -173,6 +176,33 @@ async def test_send_notification(manager: SubscriptionManager, user_id: int, mes
     except Exception as e:
         logger.error(f"Ошибка при отправке тестового уведомления: {e}")
 
+
+app = FastAPI()  # Создаем экземпляр FastAPI
+
+@app.post("/new_messages_webhook")
+async def new_messages_webhook(request: Request):
+    """
+    Веб-хук для получения новых сообщений от сканера.
+    Ожидаемый формат данных: 
+        [
+            {"message_id": 12345, "group_id": -1001234567890}, 
+            {"message_id": 12346, "group_id": -1001234567890},
+            ...
+        ]
+    """
+    try:
+        data = await request.json()  # Получаем данные из тела запроса
+        logger.info(f"Получены новые сообщения: {data}")
+        
+        # Запускаем асинхронную обработку сообщений
+        asyncio.create_task(manager.process_new_messages(data)) 
+        
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Ошибка обработки веб-хука: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
 # Пример запуска менеджера рассылки 
 async def main():
     with open("./settings.json", "r") as f:
@@ -182,20 +212,29 @@ async def main():
     bot_webhook_url = f"{settings['webhook_host']}:{settings['webhook_port']}/send_message"  # Замените на ваш URL
     bot_webhook_token = settings['webhook_token']
     
+    # Создание экземпляра SubscriptionManager
+    global manager  # Используем глобальный manager
     manager = SubscriptionManager(db_config, vectorizer, bot_webhook_url, bot_webhook_token)
     
     # Запускаем планировщик задач
     # В нашем случае он уже был запущен в __init__
     # manager.scheduler.start()  
     
-    # Обработка тестового сообщения
-    await manager.process_new_messages([{'message_id': 1028, 'group_id': -1001496846806}]) 
+    # # Обработка тестового сообщения
+    # await manager.process_new_messages([{'message_id': 1028, 'group_id': -1001496846806}]) 
     
-    # Тестовое добавление подписки
-    await manager.add_subscription(user_id=383856771, chat_id=-1001496846806, query="поиск телеграм", priority=1, threshold=0.6)
+    # # Тестовое добавление подписки
+    # await manager.add_subscription(user_id=383856771, chat_id=-1001496846806, query="поиск телеграм", priority=1, threshold=0.6)
     
     # Тестовая отправка уведомления
     await test_send_notification(manager, user_id=383856771, message="Это тестовое уведомление! Менеджер подписок успешно запущен 😎")
+
+    # Создание конфигурации сервера uvicorn
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+    server = uvicorn.Server(config)
+
+    # Запуск сервера в отдельной задаче asyncio
+    await server.serve()
     
     while True:
         await asyncio.sleep(1)  # Просто ждем
