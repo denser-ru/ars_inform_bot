@@ -1,5 +1,6 @@
 # db_manager.py
 import psycopg2, json
+from typing import List, Tuple, Any
 
 # Импортируем модуль logging
 import logging
@@ -146,3 +147,49 @@ class DBManager:
 			return row[0] 
 		else:
 			return None
+
+	def get_user_subscriptions(self, user_id: int) -> List[Tuple]:
+		"""
+		Возвращает список подписок пользователя из базы данных.
+		"""
+		with self.db_connection:
+			self.db_cursor.execute(
+				"SELECT id, query, threshold FROM subscriptions WHERE user_id = %s", (user_id,)
+			)
+			return self.db_cursor.fetchall()
+
+	def update_subscription(self, subscription_id: int, **kwargs: Any) -> None:
+		"""
+		Обновляет параметры существующей подписки.
+
+		Args:
+			subscription_id: ID подписки.
+			kwargs: Параметры для обновления (query, query_vector, priority, threshold).
+		"""
+		# Формируем SQL-запрос для обновления подписки
+		set_values = ", ".join([f"{key} = %s" for key in kwargs])
+		query = f"UPDATE subscriptions SET {set_values} WHERE id = %s"
+		values = list(kwargs.values()) + [subscription_id]  #  Добавляем subscription_id в список
+
+		try:
+			with self.db_connection:
+				self.db_cursor.execute(query, values)
+				logger.info(f"Подписка {subscription_id} обновлена")
+		except psycopg2.Error as e:
+			logger.error(f"Ошибка обновления подписки: {e}")
+
+	def delete_subscription(self, subscription_id: int) -> None:
+		"""
+		Удаляет подписку.
+
+		Args:
+			subscription_id: ID подписки.
+		"""
+		try:
+			with self.db_connection:
+				self.db_cursor.execute(
+					"DELETE FROM subscriptions WHERE id = %s", (subscription_id,)
+				)
+				logger.info(f"Подписка {subscription_id} удалена.")
+		except psycopg2.Error as e:
+			logger.error(f"Ошибка удаления подписки: {e}")

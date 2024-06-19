@@ -9,6 +9,7 @@ from aiogram.filters import CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram import F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import Message
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Header
@@ -18,6 +19,7 @@ from utils.search import MessagesVectorizer
 from utils.binance_data_collector import RatesDataCollector
 from utils.db_manager import DBManager
 from utils.llm_helper import LLMHelper
+from subscription_manager.subscription_manager import SubscriptionManager
 
 
 # Импортируем настроки журналирования из файла logger.py
@@ -78,6 +80,14 @@ rdc = RatesDataCollector(settings["db_config"])
 # Создаем объект DBManager
 # для тестового бота дабаз: "exchange_rates_dev"
 db_manager = DBManager( settings["db_config"], dbname="exchange_rates_dev" if settings["DEV"] else "exchange_rates" )
+
+# Создаем объект SubscriptionManager
+manager = SubscriptionManager(
+    db_config=settings["db_config"],
+    vectorizer=mv,  # Передаем объект MessagesVectorizer
+    bot_webhook_url=f"{settings['fastapi_host']}:{settings['fastapi_port']}/send_message",
+    bot_webhook_token=settings['fastapi_token'] 
+)
 
 # Описание бота для LLM
 bot_description = """\
@@ -335,22 +345,263 @@ async def cmd_currency( message: types.Message ):
     msg = "<b>Курсы ARS к USD</b> (USDT)\n\n" + rate_txt_line
     await message.reply(msg, parse_mode='HTML')
 
-# Обработчик всех сообщений, которое не является командой и не определённых команд
+
+
+
+
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
+
+
+class SubscriptionStates(StatesGroup):
+    WAITING_FOR_QUERY = State()
+    WAITING_FOR_THRESHOLD = State()
+    EDITING_SUBSCRIPTION = State() # Новое состояние для редактирования
+
+    WAITING_FOR_NEW_TEXT = State() # ⭐️ Добавлено
+    WAITING_FOR_NEW_THRESHOLD = State() # ⭐️ Добавлено
+
+class SubscriptionManagerFSM:
+    """Класс для управления FSM, связанными с подписками."""
+
+    def __init__(self, manager: SubscriptionManager):
+        self.manager = manager
+
+    async def cmd_newsubscription(self, message: types.Message, state: FSMContext):
+        """Создает новую подписку."""
+        await state.set_state(SubscriptionStates.WAITING_FOR_QUERY)
+        await message.reply("Введите текст для новой подписки:")
+
+    async def process_query(self, message: types.Message, state: FSMContext):
+        """Обрабатывает текст новой подписки."""
+        await state.update_data(query=message.text)
+        await state.set_state(SubscriptionStates.WAITING_FOR_THRESHOLD)
+        await message.reply("Введите порог для новой подписки (от 0.00 до 0.80):")
+
+    async def process_threshold(self, message: types.Message, state: FSMContext):
+        """Обрабатывает порог новой подписки."""
+        try:
+            threshold = float(message.text)
+            if not 0.00 <= threshold <= 0.80:
+                raise ValueError
+        except ValueError:
+            await message.reply("Некорректный порог. Введите число от 0.00 до 0.80.")
+            return
+
+        user_data = await state.get_data()
+
+        await self.manager.add_subscription(
+            user_id=message.from_user.id,
+            chat_id=message.chat.id,
+            query=user_data["query"],
+            threshold=threshold
+        )
+        await message.answer("Подписка успешно создана!")
+        await state.set_state(None)
+
+    async def cmd_mysubscriptions(self, message: types.Message):
+        """Показывает список активных подписок пользователя."""
+        user_id = message.from_user.id
+        subscriptions = await self.manager.get_user_subscriptions(user_id)
+
+        if subscriptions:
+            message_text = "Ваши подписки:\n\n"
+            for sub in subscriptions:
+                message_text += (
+                    f"ID: {sub[0]}\n"
+                    f"Запрос: {sub[1]}\n"
+                    f"Порог: {sub[2]:.2f}\n\n"
+                )
+            await message.reply(message_text)
+        else:
+            await message.reply("У вас пока нет активных подписок.")
+
+    async def cmd_updatesubscription(self, message: types.Message, state: FSMContext):
+        """Начинает процесс редактирования подписки."""
+        user_id = message.from_user.id
+        subscriptions = await self.manager.get_user_subscriptions(user_id)
+
+        if subscriptions:
+            await state.update_data(subscriptions=subscriptions)
+            await self.show_subscriptions_for_editing(message, subscriptions)
+        else:
+            await message.reply("У вас пока нет активных подписок.")
+
+    async def show_subscriptions_for_editing(self, message: types.Message, subscriptions):
+        """Отображает кнопки для выбора подписки для редактирования."""
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"ID: {sub[0]}, Запрос: {sub[1]}",
+                        callback_data=f"subscription_edit_{sub[0]}"
+                    )
+                ]
+                for sub in subscriptions
+            ],
+            row_width=1
+        )
+        await message.reply("Выберите подписку для редактирования:", reply_markup=keyboard)
+
+    async def process_subscription_selection(self, callback_query: types.CallbackQuery, state: FSMContext):
+        """Обрабатывает выбор подписки для редактирования."""
+        subscription_id = int(callback_query.data.split('_')[2])
+        await state.update_data(subscription_id=subscription_id)
+        await state.set_state(SubscriptionStates.EDITING_SUBSCRIPTION)
+        await self.show_edit_options(callback_query.message, subscription_id)
+    
+    async def show_edit_options(self, message: types.Message, subscription_id: int):
+        """Отображает кнопки для редактирования текста или порога подписки."""
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="✏️ Изменить текст", callback_data=f"edit_text_{subscription_id}"),
+                    InlineKeyboardButton(text="✏️ Изменить порог", callback_data=f"edit_threshold_{subscription_id}"),
+                    InlineKeyboardButton(text="❌ Удалить", callback_data=f"subscription_delete_{subscription_id}")
+                ]
+            ],
+            row_width=1
+        )
+        await message.edit_text(f"Выберите действие для подписки ID: {subscription_id}", reply_markup=keyboard)
+
+    async def process_edit_text(self, callback_query: types.CallbackQuery, state: FSMContext):
+        """Обрабатывает выбор редактирования текста."""
+        subscription_id = int(callback_query.data.split('_')[2])
+        await state.update_data(subscription_id=subscription_id)
+        await state.set_state(SubscriptionStates.WAITING_FOR_NEW_TEXT)
+        await callback_query.answer()
+        await self.ask_for_new_text(callback_query.message, subscription_id)
+
+    async def ask_for_new_text(self, message: types.Message, subscription_id: int):
+        """Запрашивает у пользователя новый текст подписки."""
+        await message.edit_text(f"Введите новый текст для подписки ID: {subscription_id}")
+
+    async def process_new_text(self, message: types.Message, state: FSMContext):
+        """Обрабатывает новый текст подписки."""
+        user_data = await state.get_data()
+        subscription_id = user_data["subscription_id"]
+        new_text = message.text
+
+        try:
+            await self.manager.update_subscription(subscription_id, query=new_text)
+            await message.answer(f"Текст подписки id={subscription_id} успешно обновлен!")
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении текста подписки: {e}")
+            await message.answer("Произошла ошибка при обновлении подписки. Попробуйте позже.")
+        finally:
+            await state.set_state(None)
+
+    async def process_edit_threshold(self, callback_query: types.CallbackQuery, state: FSMContext):
+        """Обрабатывает выбор редактирования порога."""
+        subscription_id = int(callback_query.data.split('_')[2])
+        await state.update_data(subscription_id=subscription_id)
+        await state.set_state(SubscriptionStates.WAITING_FOR_NEW_THRESHOLD)
+        await callback_query.answer()
+        await self.ask_for_new_threshold(callback_query.message, subscription_id)
+
+    async def ask_for_new_threshold(self, message: types.Message, subscription_id: int):
+        """Запрашивает у пользователя новый порог подписки."""
+        await message.edit_text(f"Введите новый порог (от 0.00 до 0.80) для подписки ID: {subscription_id}")
+
+    async def process_new_threshold(self, message: types.Message, state: FSMContext):
+        """Обрабатывает новый порог подписки."""
+        try:
+            new_threshold = float(message.text)
+            if not 0.00 <= new_threshold <= 0.80:
+                raise ValueError
+        except ValueError:
+            await message.reply("Некорректный порог. Введите число от 0.00 до 0.80.")
+            return
+
+        user_data = await state.get_data()
+        subscription_id = user_data["subscription_id"]
+
+        try:
+            await self.manager.update_subscription(subscription_id, threshold=new_threshold)
+            await message.answer(f"Порог подписки id={subscription_id} успешно обновлен!")
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении порога подписки: {e}")
+            await message.answer("Произошла ошибка при обновлении подписки. Попробуйте позже.")
+        finally:
+            await state.set_state(None)
+
+    async def process_delete_subscription(self, callback_query: types.CallbackQuery):
+        """Удаляет существующую подписку."""
+        subscription_id = int(callback_query.data.split('_')[2])
+        try:
+            await self.manager.delete_subscription(subscription_id)
+            await callback_query.message.answer(f"Подписка id={ subscription_id } удалена.")
+            await callback_query.message.delete()
+        except Exception as e:
+            logger.error(f"Ошибка при удалении подписки: {e}")
+            await callback_query.message.answer("Произошла ошибка. Попробуйте позже.")
+
+
+# Создание экземпляра FSM менеджера
+subscription_fsm = SubscriptionManagerFSM(manager)
+
+# Создай экземпляр SubscriptionStates
+subscription_states = SubscriptionStates()
+
+# Регистрация обработчиков FSM
+dp.message(Command("newsubscription"))(subscription_fsm.cmd_newsubscription)
+dp.message(Command("mysubscriptions"))(subscription_fsm.cmd_mysubscriptions)
+dp.message(Command("updatesubscription"))(subscription_fsm.cmd_updatesubscription)
+
+# Обработчики для состояний FSM
+dp.message(F.state == subscription_states.WAITING_FOR_QUERY)(subscription_fsm.process_query) # ⭐️ Изменен
+dp.message(F.state == subscription_states.WAITING_FOR_THRESHOLD)(subscription_fsm.process_threshold) # ⭐️ Изменен
+dp.message(F.state == subscription_states.WAITING_FOR_NEW_TEXT)(subscription_fsm.process_new_text) # ⭐️ Изменен
+dp.message(F.state == subscription_states.WAITING_FOR_NEW_THRESHOLD)(subscription_fsm.process_new_threshold) # ⭐️ Изменен
+
+# Обработчики callback-запросов
+dp.callback_query(lambda c: c.data.startswith("subscription_edit_"))(subscription_fsm.process_subscription_selection)
+dp.callback_query(lambda c: c.data.startswith("edit_text_"))(subscription_fsm.process_edit_text)
+dp.callback_query(lambda c: c.data.startswith("edit_threshold_"))(subscription_fsm.process_edit_threshold)
+dp.callback_query(lambda c: c.data.startswith("subscription_delete_"))(subscription_fsm.process_delete_subscription)
+
+
+
+
+
+
+
+
+
 @dp.message()
-async def handle_message(message: types.Message):
+async def handle_message(message: types.Message, state: FSMContext):  # Добавляем state
+    """Обрабатывает сообщения, не являющиеся командами."""
     chat_id = message.chat.id
-    await check_cache( chat_id, message )
+    await check_cache(chat_id, message)
+
+    # Проверяем, не находится ли бот в состоянии ожидания данных для подписки
+    current_state = await state.get_state()
+    if current_state is not None:
+        # Если бот в состоянии FSM, обрабатываем сообщение в соответствии с текущим состоянием
+        if current_state == subscription_states.WAITING_FOR_QUERY: 
+            await subscription_fsm.process_query(message, state) # ⭐️ Исправление
+        elif current_state == subscription_states.WAITING_FOR_THRESHOLD:
+            await subscription_fsm.process_threshold(message, state) # ⭐️ Исправление
+        elif current_state == subscription_states.WAITING_FOR_NEW_TEXT:  # ⭐️ Добавлено
+            await subscription_fsm.process_new_text(message, state) # ⭐️ Добавлено
+        elif current_state == subscription_states.WAITING_FOR_NEW_THRESHOLD:  # ⭐️ Добавлено
+            await subscription_fsm.process_new_threshold(message, state) # ⭐️ Добавлено
+        return  # Не обрабатываем сообщение, если бот в состоянии FSM
+
     # Проверяем тип сообщения
     if message.content_type == 'text':
         # Обрабатываем текстовое сообщение
         if message.text.startswith('/'):
             command = message.text.split()[0]
             db_manager.log_user_action(message.from_user.id, "unknown_command", message.text)
-            await message.reply(f"Извини, я не знаю такой команды <code>{ command }</code>. Попробуй ещё раз.", parse_mode='HTML')
+            await message.reply(
+                f"Извини, я не знаю такой команды <code>{command}</code>. Попробуй ещё раз.",
+                parse_mode='HTML'
+            )
         else:
             if chat_id in cache and cache[chat_id]["wait"] == "search":
                 cache[chat_id]["is_new"] = True
-                await search( chat_id, message, message.text )
+                await search(chat_id, message, message.text)
             else:
                 db_manager.log_user_action(message.from_user.id, "message", message.text)
                 # Вызов LLM для обработки текста, не являющегося командой
@@ -360,12 +611,12 @@ async def handle_message(message: types.Message):
                 if llm_response is not None:
                     # Проверяем, является ли ответ вызовом функции или текстом
                     if isinstance(llm_response, dict) and "name" in llm_response:
-                        await process_llm_response(message, llm_response) 
+                        await process_llm_response(message, llm_response)
                     else:
                         # Ответ - это просто текст
                         await message.reply(llm_response)
                 # else:
-                    # ... (обработка случая, когда LLM вернул None) ..
+                # ... (обработка случая, когда LLM вернул None) ..
     else:
         # Обрабатываем другие типы сообщений
         content_type = message.content_type

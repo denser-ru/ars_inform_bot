@@ -35,10 +35,10 @@ class SubscriptionManager:
         self.bot_webhook_token = bot_webhook_token
         self.notification_queue = PriorityQueue()
         self.scheduler = AsyncIOScheduler()
-        self.scheduler.add_job(self.process_notifications, "interval", seconds=10)
+        self.scheduler.add_job(self.process_notifications, "interval", seconds=60)
         self.scheduler.start()
         self.rate_limits = {
-            1: timedelta(seconds=10),
+            1: timedelta(seconds=60),
             2: timedelta(minutes=5),
             3: timedelta(minutes=15),
             4: timedelta(hours=1),
@@ -149,7 +149,7 @@ class SubscriptionManager:
         except Exception as e:
             logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {e}")
 
-    async def add_subscription(self, user_id: int, chat_id: int, query: str, priority: int = 7, threshold: float = 0.6):
+    async def add_subscription(self, user_id: int, chat_id: int, query: str, priority: int = 3, threshold: float = 0.6):
         """
         Добавляет новую подписку для пользователя.
 
@@ -166,6 +166,28 @@ class SubscriptionManager:
             logger.info(f"Подписка добавлена для пользователя {user_id}: {query}")
         except Exception as e:
             logger.error(f"Ошибка при добавлении подписки: {e}")
+
+    async def get_user_subscriptions(self, user_id: int) -> List[Dict]:
+        """
+        Возвращает список подписок пользователя.
+        """
+        subscriptions = self.db_manager.get_user_subscriptions(user_id)
+        return subscriptions
+
+    async def update_subscription(self, subscription_id: int, **kwargs):
+        """
+        Обновляет параметры существующей подписки.
+        """
+        if "query" in kwargs:
+            kwargs["query_vector"] = self.vectorizer.vectorize_message(kwargs["query"])
+        self.db_manager.update_subscription(subscription_id, **kwargs)
+
+    async def delete_subscription(self, subscription_id: int):
+        """
+        Удаляет подписку.
+        """
+        self.db_manager.delete_subscription(subscription_id)
+
 
 # тестовая функция
 async def test_send_notification(manager: SubscriptionManager, user_id: int, message: str):
@@ -224,7 +246,7 @@ async def main():
     # await manager.process_new_messages([{'message_id': 1028, 'group_id': -1001496846806}]) 
     
     # # Тестовое добавление подписки
-    # await manager.add_subscription(user_id=383856771, chat_id=-1001496846806, query="поиск телеграм", priority=1, threshold=0.6)
+    # await manager.add_subscription(user_id=383856771, chat_id=-1001496846806, query="внж рантье", priority=1, threshold=0.6)
     
     # Тестовая отправка уведомления
     await test_send_notification(manager, user_id=383856771, message="Это тестовое уведомление! Менеджер подписок успешно запущен 😎")
