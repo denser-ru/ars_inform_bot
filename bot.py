@@ -141,6 +141,7 @@ def make_kb( chat_id ):
         ],
         [
             types.KeyboardButton(text="/settings", web_app=WebAppInfo(url=url)),
+            types.KeyboardButton(text="/subscriptions"),
             types.KeyboardButton(text="/help")
         ],
     ]
@@ -211,6 +212,7 @@ async def cmd_help(message: types.Message):
 • <i>Делюсь последними новостями:</i> Узнай, что происходит в Аргентине прямо сейчас! (в разработке)
 • <i>Помогаю спланировать путешествие:</i>  Найду лучшие места для отдыха, расскажу о достопримечательностях и помогу с визой.
 • <i>Сообщаю актуальный курс валют:</i>  Будь в курсе последних изменений курса аргентинского песо.
+• <i>Помогаю с подписками:</i> Создай подписку на интересующую тебя тему, и я буду присылать уведомления о новых релевантных сообщениях.
 
 <b>Как пользоваться?</b>
 
@@ -223,9 +225,15 @@ async def cmd_help(message: types.Message):
     • /settings - настройка параметров поиска: 
         • Вы можете указать временной диапазон для поиска информации. 
         • Выберите, как сортировать результаты: по релевантности или по дате.
+    • /subscriptions - управление подписками:
+        • Создать подписку
+        • Посмотреть список активных подписок
+        • Изменить или удалить подписку
+        • Подробнее о подписках - /subscription_help
+    • /feedback - оставить отзыв о боте
 
 <b>ARS Inform - твой надежный помощник в мире информации об Аргентине!</b> 
-"""
+    """
     await message.reply( help_text, parse_mode='HTML' )
 
 @dp.message(Command("search"))
@@ -356,10 +364,10 @@ from aiogram.fsm.context import FSMContext
 class SubscriptionStates(StatesGroup):
     WAITING_FOR_QUERY = State()
     WAITING_FOR_THRESHOLD = State()
-    EDITING_SUBSCRIPTION = State() # Новое состояние для редактирования
+    EDITING_SUBSCRIPTION = State()
 
-    WAITING_FOR_NEW_TEXT = State() # ⭐️ Добавлено
-    WAITING_FOR_NEW_THRESHOLD = State() # ⭐️ Добавлено
+    WAITING_FOR_NEW_TEXT = State()
+    WAITING_FOR_NEW_THRESHOLD = State()
 
 class SubscriptionManagerFSM:
     """Класс для управления FSM, связанными с подписками."""
@@ -567,6 +575,144 @@ dp.callback_query(lambda c: c.data.startswith("subscription_delete_"))(subscript
 
 
 
+from aiogram.types import ReplyKeyboardRemove
+
+# Добавляем новое состояние для отзыва
+class FeedbackStates(StatesGroup):
+    WAITING_FOR_FEEDBACK = State()
+
+# Создаем экземпляр FeedbackStates
+feedback_states = FeedbackStates()
+
+# Создаем функцию-обработчик для команды /feedback
+@dp.message(Command("feedback"))
+async def cmd_feedback(message: types.Message, state: FSMContext):
+    await state.set_state(feedback_states.WAITING_FOR_FEEDBACK)
+    await message.answer(
+        "Оставьте свой отзыв о работе бота ARS Inform:\n\n"
+        "💬  Опишите, что вам понравилось или не понравилось.\n"
+        "💡  Предложите идеи для улучшения.\n\n"
+        "Ваше мнение поможет сделать бота лучше! 🙏",
+        reply_markup=ReplyKeyboardRemove()
+        )
+
+# Обработчик для состояния ожидания отзыва
+@dp.message(F.state == feedback_states.WAITING_FOR_FEEDBACK)
+async def process_feedback(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    feedback = message.text
+    db_manager.log_user_action(user_id, "feedback", feedback)  # Логируем отзыв
+    await message.answer("Спасибо за ваш отзыв!")
+    await state.clear()
+
+
+
+
+
+@dp.message(Command("subscriptions"))
+async def cmd_subscriptions(message: types.Message):
+    """Отображает меню справки по менеджеру подписок."""
+    db_manager.log_user_action(message.from_user.id, "subscriptions")
+
+    # Кнопки для меню
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Создать подписку", callback_data="create_subscription"),
+            ],
+            [
+                InlineKeyboardButton(text="Мои подписки", callback_data="my_subscriptions"),
+            ],
+            [
+                InlineKeyboardButton(text="Изменить подписку", callback_data="update_subscription"),
+            ],
+            [
+                InlineKeyboardButton(text="Подробнее", callback_data="subscription_help"),
+            ],
+        ]
+    )
+
+    await message.answer(
+        "Менеджер подписок:\n\n"
+        "Выберите нужное действие:",
+        reply_markup=keyboard,
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith("create_subscription"))
+async def handle_create_subscription(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(SubscriptionStates.WAITING_FOR_QUERY)
+    await callback_query.message.answer(
+        "Введите текст для новой подписки:\n\n"
+        "Например: 'аргентина туризм' \n\n"
+        "Бот будет отправлять вам сообщения, соответствующие этому запросу.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith("my_subscriptions"))
+async def handle_my_subscriptions(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    subscriptions = await manager.get_user_subscriptions(user_id)
+
+    if subscriptions:
+        message_text = "Ваши подписки:\n\n"
+        for sub in subscriptions:
+            message_text += (
+                f"ID: {sub[0]}\n"
+                f"Запрос: {sub[1]}\n"
+                f"Порог: {sub[2]:.2f}\n\n"
+            )
+        await callback_query.message.answer(message_text)
+    else:
+        await callback_query.message.answer("У вас пока нет активных подписок.")
+
+
+@dp.callback_query(lambda c: c.data.startswith("update_subscription"))
+async def handle_update_subscription(callback_query: types.CallbackQuery, state: FSMContext):
+    user_id = callback_query.from_user.id
+    subscriptions = await manager.get_user_subscriptions(user_id)
+
+    if subscriptions:
+        await state.update_data(subscriptions=subscriptions)
+        await subscription_fsm.show_subscriptions_for_editing(callback_query.message, subscriptions)
+    else:
+        await callback_query.message.answer("У вас пока нет активных подписок.")
+
+
+@dp.message(Command("subscription_help"))
+async def cmd_subscription_help(message: types.Message):
+    """Отображает подробную справку о менеджере подписок."""
+    db_manager.log_user_action(message.from_user.id, "subscription_help")
+    help_text = """\
+    <b>Менеджер подписок</b>
+
+    <b>Что такое подписки?</b>
+    Подписки позволяют получать уведомления о новых сообщениях в чатах, соответствующих вашим интересам.
+
+    <b>Как работают подписки?</b>
+    1. **Создайте подписку:**  Введите поисковый запрос, по которому вы хотите получать уведомления.
+    2. **Настройте порог сходства:**  Укажите, насколько точно сообщения должны соответствовать вашему запросу.
+    3. **Получайте уведомления:**  Бот будет отправлять вам сообщения, которые соответствуют вашим критериям.
+
+    <i>Порог сходства от 0.00 до 0.80 (чем меньше, тем ближе по смыслу). Рекомендуется подбирать порог для каждой поисковой фразы через поиск (/search) в диапозоне дат от 7 до 30 дней, сортируя по сходству.</i>
+
+    <b>Команды менеджера подписок:</b>
+    • **/subscriptions** - главное меню подписок
+    • **/newsubscription** - создать новую подписку
+    • **/mysubscriptions** - посмотреть список активных подписок
+    • **/updatesubscription** - изменить или удалить подписку
+    """
+    await message.answer(help_text, parse_mode="HTML")
+
+@dp.callback_query(lambda c: c.data.startswith("subscription_help"))
+async def handle_subscription_help(callback_query: types.CallbackQuery):
+    """Отображает подробную справку о менеджере подписок."""
+    await cmd_subscription_help(callback_query.message)  # Вызываем cmd_subscription_help для отображения справки
+
+
+
+
 
 @dp.message()
 async def handle_message(message: types.Message, state: FSMContext):  # Добавляем state
@@ -579,13 +725,15 @@ async def handle_message(message: types.Message, state: FSMContext):  # Доба
     if current_state is not None:
         # Если бот в состоянии FSM, обрабатываем сообщение в соответствии с текущим состоянием
         if current_state == subscription_states.WAITING_FOR_QUERY: 
-            await subscription_fsm.process_query(message, state) # ⭐️ Исправление
+            await subscription_fsm.process_query(message, state)
         elif current_state == subscription_states.WAITING_FOR_THRESHOLD:
-            await subscription_fsm.process_threshold(message, state) # ⭐️ Исправление
-        elif current_state == subscription_states.WAITING_FOR_NEW_TEXT:  # ⭐️ Добавлено
-            await subscription_fsm.process_new_text(message, state) # ⭐️ Добавлено
-        elif current_state == subscription_states.WAITING_FOR_NEW_THRESHOLD:  # ⭐️ Добавлено
-            await subscription_fsm.process_new_threshold(message, state) # ⭐️ Добавлено
+            await subscription_fsm.process_threshold(message, state)
+        elif current_state == subscription_states.WAITING_FOR_NEW_TEXT:
+            await subscription_fsm.process_new_text(message, state)
+        elif current_state == subscription_states.WAITING_FOR_NEW_THRESHOLD:
+            await subscription_fsm.process_new_threshold(message, state)
+        elif current_state == feedback_states.WAITING_FOR_FEEDBACK:
+            await process_feedback(message, state)
         return  # Не обрабатываем сообщение, если бот в состоянии FSM
 
     # Проверяем тип сообщения
@@ -611,7 +759,7 @@ async def handle_message(message: types.Message, state: FSMContext):  # Доба
                 if llm_response is not None:
                     # Проверяем, является ли ответ вызовом функции или текстом
                     if isinstance(llm_response, dict) and "name" in llm_response:
-                        await process_llm_response(message, llm_response)
+                        await process_llm_response(message, llm_response, state)
                     else:
                         # Ответ - это просто текст
                         await message.reply(llm_response)
@@ -623,7 +771,7 @@ async def handle_message(message: types.Message, state: FSMContext):  # Доба
         db_manager.log_user_action(message.from_user.id, content_type)
 
 
-async def process_llm_response(message, llm_response):
+async def process_llm_response(message, llm_response, state: FSMContext):
     #  Эта функция теперь вызывается только если LLM выбрал функцию
     function_name = llm_response.get("name")
     function_args = llm_response.get("content")
@@ -635,6 +783,18 @@ async def process_llm_response(message, llm_response):
         await cmd_help( message )
     elif function_name == "currency":
         await cmd_currency( message )
+    elif function_name == "feedback":
+        await cmd_feedback( message, state )
+    elif function_name == "subscriptions":
+        await cmd_subscriptions( message )
+    elif function_name == "my_subscriptions":
+        await subscription_fsm.cmd_mysubscriptions( message, state )
+    elif function_name == "subscription_help":
+        await cmd_subscription_help( message )
+    elif function_name == "create_subscription":
+        await subscription_fsm.cmd_newsubscription( message, state )
+    elif function_name == "update_subscription":
+        await subscription_fsm.cmd_updatesubscription( message, state )
     # ... (обработка других функций) ..
 
 class MessageData(BaseModel):  # Модель для данных сообщения

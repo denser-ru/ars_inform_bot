@@ -32,7 +32,6 @@ class LLMHelper:
                                 "type": "string",
                                 "description": "Текст поискового запроса.",
                             },
-                            # ... (другие параметры) ...
                         },
                         "required": ["query"],
                     },
@@ -50,7 +49,6 @@ class LLMHelper:
                                 "type": "string",
                                 "description": "Текст поискового запроса.",
                             },
-                            # ... (другие параметры) ...
                         },
                         "required": ["query"],
                     },
@@ -68,13 +66,97 @@ class LLMHelper:
                                 "type": "string",
                                 "description": "Текст поискового запроса.",
                             },
-                            # ... (другие параметры) ...
                         },
                         "required": ["query"],
                     },
                 },
             },
-            # ... (другие функции) ...
+            {
+                "type": "function",
+                "function": {
+                    "name": "feedback",
+                    "description": "Обратная связь. Оставляет отзыв о боте, предложения по улучшению и/или о сотрудничесте",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "feedback": {
+                                "type": "string",
+                                "description": "Текст отзыва."
+                            },
+                        },
+                        "required": ["feedback"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "subscriptions",
+                    "description": "Показать главное меню менеджера подписок.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "my_subscription",
+                    "description": "Показать моих активных подписок.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "subscription_help",
+                    "description": "Что такое подписки. Справка о работе менеджера подписок.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_subscription",
+                    "description": "Создать новую подписку.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Текст для новой подписки.",
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "update_subscription",
+                    "description": "Изменить или удалить подписку.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "required": [],
+                    },
+                },
+            },
         ]
 
     async def process_user_input(self, message_text):
