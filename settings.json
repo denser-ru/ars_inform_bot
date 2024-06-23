@@ -1,7 +1,7 @@
 {
     "scan_interval": 0,
     "DEBUG": 1,
-    "DEV": 1,
+    "DEV": 0,
     "CACHE_TTL": 900,
     "tmp_dir": "./tmp/",
     "GEMINI_API_KEY": "AIzaSyDervOzi5w7GYyBGVbXA6JyzqZ2lEFC4oY",
@@ -22,5 +22,5 @@
     "GROQ_MODEL": "llama3-70b-8192",
     "fastapi_host": "0.0.0.0",
     "fastapi_port": 8080,
-    "fastapi_token": "ARS_INFORM_BOT.DEV"
+    "fastapi_token": "ARS_INFORM_BOT"
 }

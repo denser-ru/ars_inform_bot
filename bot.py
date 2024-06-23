@@ -70,7 +70,7 @@ settings_def = {
 	"sort_by": 'relevance'
 }
 
-WAITING_FOR_QUERY_TIMEOUT = 30  # Таймаут ожидания в секундах
+WAITING_FOR_QUERY_TIMEOUT = 60  # Таймаут ожидания в секундах
 
 
 async def bot_test(bot):

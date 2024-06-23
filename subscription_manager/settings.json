@@ -1,7 +1,7 @@
 {
     "scan_interval": 0,
     "DEBUG": 1,
-    "DEV": 1,
+    "DEV": 0,
     "CACHE_TTL": 900,
     "number_msgs": 5,
     "number_words": 30,
@@ -13,7 +13,7 @@
         "password": "postgres",
         "dbname": "postgres"
     },
-    "webhook_host": "http://ars_inform_bot_dev",
+    "webhook_host": "http://ars_inform_bot",
     "webhook_port": 8080,
-    "webhook_token": "ARS_INFORM_BOT.DEV"
+    "webhook_token": "ARS_INFORM_BOT"
 }

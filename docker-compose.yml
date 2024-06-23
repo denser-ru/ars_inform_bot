@@ -2,11 +2,13 @@ version: '3'
 
 services:
   # Сервис для вашего телеграм бота
-  ars_inform_dev:
+  ars_inform_bot:
     build: . # Ссылка на Dockerfile в текущей папке
+    depends_on:
+      - db # Указываем, что бот зависит от базы данных
     networks:
       - app-network # Указываем, что бот принадлежит к сети app-network
-    container_name: ars_inform_bot_dev # Задаем сетевое имя для контейнера
+    container_name: ars_inform_bot # Задаем сетевое имя для контейнера
     volumes: # Монтируем папку с кодом приложения в контейнер
       - ./:/app
     extra_hosts:
@@ -14,19 +16,31 @@ services:
     # network_mode: host
 
   # Сервис для менеджера рассылки
-  ars_inform_subscription_manager_dev:
+  ars_inform_subscription_manager:
     build:
       context: .  # Используем тот же контекст, что и для бота
       dockerfile: Dockerfile.sm  # Указываем Dockerfile для менеджера
     networks:
       - app-network
-    container_name: subscription_manager_dev # Задаем сетевое имя для контейнера
+    container_name: subscription_manager # Задаем сетевое имя для контейнера
     volumes:
       - ./subscription_manager:/app  # Монтируем ту же папку с кодом, что и для бота
       - ./utils:/app/utils
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Сервис для postgres
+  ars_inform_db:
+    build:
+      context: . # путь к папке с Dockerfile
+      dockerfile: Dockerfile.bd # имя файла
+    environment:
+      - POSTGRES_PASSWORD=postgres # Устанавливаем пароль для пользователя postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/ # Монтируем том для хранения данных
+    networks:
+      - app-network # Указываем, что база данных принадлежит к сети app-network
+    container_name: ars_inform_bd # Задаем сетевое имя для контейнера
 
 # Определяем сеть для связи между сервисами
 networks:
@@ -34,3 +48,11 @@ networks:
     driver: bridge
     name: ars_inform # Задаем имя сети
 
+# Определяем том для хранения данных postgres
+volumes:
+  postgres_data:
+    driver: local # Указываем драйвер для тома
+    driver_opts: # Указываем опции для драйвера
+      type: none # Тип тома - none
+      device: ../postgres_data # Устройство - папка на хосте
+      o: bind # Опция - привязка
