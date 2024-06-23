@@ -8,8 +8,13 @@ from aiogram.filters.command import Command
 from aiogram.filters import CommandObject
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram import F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-from aiogram.types import Message
+from aiogram.types import  (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    WebAppInfo,
+    Message,
+    CallbackQuery
+)
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Header
@@ -20,6 +25,12 @@ from utils.binance_data_collector import RatesDataCollector
 from utils.db_manager import DBManager
 from utils.llm_helper import LLMHelper
 from subscription_manager.subscription_manager import SubscriptionManager
+
+from typing import Callable, Optional
+
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
+
 
 
 # Импортируем настроки журналирования из файла logger.py
@@ -58,6 +69,8 @@ settings_def = {
 	"end_date": "*",
 	"sort_by": 'relevance'
 }
+
+WAITING_FOR_QUERY_TIMEOUT = 30  # Таймаут ожидания в секундах
 
 
 async def bot_test(bot):
@@ -114,7 +127,6 @@ async def check_cache( chat_id, message ):
                 "settings": user_data[5],
                 "current_page": 0,
                 "is_new": True,
-                "wait": None,
                 "timestamp": time.time()
             }
         else:
@@ -126,11 +138,10 @@ async def check_cache( chat_id, message ):
                 "settings": settings_def,
                 "current_page": 0,
                 "is_new": True,
-                "wait": None,
                 "timestamp": time.time()
             }
 
-def make_kb( chat_id ):
+def make_kb( chat_id: int ):
     encoded_settings = base64.urlsafe_b64encode(json.dumps(cache[chat_id]["settings"]).encode()).decode()
     url = f"https://denser-ru.github.io/ars_bot_webapp/settings.html?settings={encoded_settings}"
     kb = [
@@ -236,35 +247,100 @@ async def cmd_help(message: types.Message):
     """
     await message.reply( help_text, parse_mode='HTML' )
 
+
+async def wait_for_user_input(
+    message: types.Message, 
+    state: FSMContext,
+    state_to_set: State,
+    timeout: int = WAITING_FOR_QUERY_TIMEOUT,
+    cancel_callback: Optional[Callable] = None,
+    input_request_message: str = "Ожидаю ваш ввод:", #  Параметр для текста сообщения 
+):
+    """Ожидает ввода пользователя с таймаутом и кнопкой отмены.
+
+    Args:
+        message: Сообщение, на которое ожидается ответ.
+        state: Объект FSMContext.
+        state_to_set: Состояние FSM, которое нужно установить.
+        timeout: Время ожидания в секундах.
+        cancel_callback: Функция, которая будет вызвана при отмене.
+        input_request_message: Текст сообщения с запросом ввода от пользователя. 
+    """
+
+    # Создаём клавиатуру с кнопкой отмены
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Отмена", callback_data="cancel_input")]
+    ])
+
+    # Проверяем тип message
+    if isinstance(message, Message):
+        await message.reply(input_request_message, reply_markup=keyboard)
+    elif isinstance(message, CallbackQuery):
+        await message.message.edit_text(input_request_message, reply_markup=keyboard)
+
+    await state.set_state(state_to_set)
+
+    # Запускаем таймаут ожидания
+    await asyncio.sleep(timeout)
+
+    # Если состояние не изменилось, значит ответа не было
+    if await state.get_state() == state_to_set:
+        await state.set_state(None)
+        # Проверяем тип message
+        if isinstance(message, Message):
+            await message.reply("Время ожидания ввода истекло.")
+        elif isinstance(message, CallbackQuery):
+            await message.message.edit_text("Время ожидания ввода истекло.")
+        if cancel_callback:
+            await cancel_callback(message)  # Вызываем callback-функцию
+
+
+class SearchStates(StatesGroup):
+    WAITING_FOR_QUERY = State()
+
+# Обработчик нажатия кнопки "Отмена" (теперь общий)
+@dp.callback_query(F.data.startswith("cancel_input"))
+async def cancel_input(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+    await callback_query.message.edit_text("Действие отменено.")
+
 @dp.message(Command("search"))
 async def cmd_search(
         message: types.Message,
-        command: CommandObject
+        command: CommandObject,
+        state: FSMContext
         ):
 
     chat_id = message.chat.id
     await check_cache( chat_id, message )
 
     # Поиск сообщений
-    await search( chat_id, message, command.args )
+    if command.args: 
+        # Текст запроса передан сразу с командой
+        await search(chat_id, message, command.args)
+    else:
+        # Текст запроса не передан, запрашиваем у пользователя
+        await wait_for_user_input(
+        message, 
+        state, 
+        SearchStates.WAITING_FOR_QUERY, 
+        input_request_message="Напишите ваш поисковый запрос:"
+    )
+
+# Обработчик состояния ожидания поискового запроса
+@dp.message(F.state == SearchStates.WAITING_FOR_QUERY)
+async def process_search_query(message: types.Message, state: FSMContext):
+    chat_id = message.chat.id
+    await check_cache(chat_id, message)
+    await search(chat_id, message, message.text)
+    await state.set_state(None)
 
 async def search( chat_id, message, command_args ):
-    # Если не переданы никакие аргументы, то
-    # command.args будет None
-
     # Логируем действие пользователя "поиск"
     db_manager.log_user_action(message.from_user.id, "search", command_args)
     if not chat_id in cache:
         await check_cache( chat_id, message )
     cache[chat_id]["is_new"] = True
-
-    if command_args is None:
-        await message.reply(
-            "Напишите ваш текст поискового запроса следующим сообщением:"
-        )
-        # Установка флага ожидания ввода поискового запроса
-        cache[chat_id]["wait"] = "search"
-        return
 
     results = mv.search_query(
         command_args,
@@ -278,7 +354,6 @@ async def search( chat_id, message, command_args ):
     # Кэширование результатов
     cache[chat_id]["search_query"] = command_args
     cache[chat_id]["results"] = results[:50]
-    cache[chat_id]["wait"] = None
     cache[chat_id]["timestamp"] = time.time()
     # Отображение первой страницы результатов
     await display_results_page( message, chat_id, 0 )
@@ -357,8 +432,6 @@ async def cmd_currency( message: types.Message ):
 
 
 
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.context import FSMContext
 
 
 class SubscriptionStates(StatesGroup):
@@ -377,14 +450,24 @@ class SubscriptionManagerFSM:
 
     async def cmd_newsubscription(self, message: types.Message, state: FSMContext):
         """Создает новую подписку."""
-        await state.set_state(SubscriptionStates.WAITING_FOR_QUERY)
-        await message.reply("Введите текст для новой подписки:")
+        # await state.set_state(SubscriptionStates.WAITING_FOR_QUERY)
+        # await message.reply("Введите текст для новой подписки:")
+        await wait_for_user_input(
+        message, 
+        state, 
+        SubscriptionStates.WAITING_FOR_QUERY, 
+        input_request_message="Введите текст для новой подписки:"
+    )
 
     async def process_query(self, message: types.Message, state: FSMContext):
         """Обрабатывает текст новой подписки."""
         await state.update_data(query=message.text)
-        await state.set_state(SubscriptionStates.WAITING_FOR_THRESHOLD)
-        await message.reply("Введите порог для новой подписки (от 0.00 до 0.80):")
+        await wait_for_user_input(
+            message,
+            state,
+            SubscriptionStates.WAITING_FOR_THRESHOLD,
+            input_request_message="Введите порог для новой подписки (от 0.00 до 0.80):"
+        )
 
     async def process_threshold(self, message: types.Message, state: FSMContext):
         """Обрабатывает порог новой подписки."""
@@ -393,7 +476,13 @@ class SubscriptionManagerFSM:
             if not 0.00 <= threshold <= 0.80:
                 raise ValueError
         except ValueError:
-            await message.reply("Некорректный порог. Введите число от 0.00 до 0.80.")
+            # await message.reply("Некорректный порог. Введите число от 0.00 до 0.80.")
+            await wait_for_user_input(
+                message,
+                state,
+                SubscriptionStates.WAITING_FOR_THRESHOLD,
+                input_request_message="Некорректный порог. Введите число от 0.00 до 0.80:"
+            )
             return
 
         user_data = await state.get_data()
@@ -478,11 +567,19 @@ class SubscriptionManagerFSM:
         await state.update_data(subscription_id=subscription_id)
         await state.set_state(SubscriptionStates.WAITING_FOR_NEW_TEXT)
         await callback_query.answer()
-        await self.ask_for_new_text(callback_query.message, subscription_id)
+        await self.ask_for_new_text(callback_query, subscription_id, state)
 
-    async def ask_for_new_text(self, message: types.Message, subscription_id: int):
+    # async def ask_for_new_text(self, message: types.Message, subscription_id: int):
+    #     """Запрашивает у пользователя новый текст подписки."""
+    #     await message.edit_text(f"Введите новый текст для подписки ID: {subscription_id}")
+    async def ask_for_new_text(self, callback_query: CallbackQuery, subscription_id: int, state: FSMContext):
         """Запрашивает у пользователя новый текст подписки."""
-        await message.edit_text(f"Введите новый текст для подписки ID: {subscription_id}")
+        await wait_for_user_input(
+            callback_query,
+            state, 
+            SubscriptionStates.WAITING_FOR_NEW_TEXT, 
+            input_request_message=f"Введите новый текст для подписки ID: {subscription_id}"
+        )
 
     async def process_new_text(self, message: types.Message, state: FSMContext):
         """Обрабатывает новый текст подписки."""
@@ -505,11 +602,18 @@ class SubscriptionManagerFSM:
         await state.update_data(subscription_id=subscription_id)
         await state.set_state(SubscriptionStates.WAITING_FOR_NEW_THRESHOLD)
         await callback_query.answer()
-        await self.ask_for_new_threshold(callback_query.message, subscription_id)
+        await self.ask_for_new_threshold(callback_query, subscription_id, state)
 
-    async def ask_for_new_threshold(self, message: types.Message, subscription_id: int):
+    # async def ask_for_new_threshold(self, message: types.Message, subscription_id: int):
+    async def ask_for_new_threshold(self, callback_query: CallbackQuery, subscription_id: int, state: FSMContext):
         """Запрашивает у пользователя новый порог подписки."""
-        await message.edit_text(f"Введите новый порог (от 0.00 до 0.80) для подписки ID: {subscription_id}")
+        # await message.edit_text(f"Введите новый порог (от 0.00 до 0.80) для подписки ID: {subscription_id}")
+        await wait_for_user_input(
+            callback_query,
+            state, 
+            SubscriptionStates.WAITING_FOR_NEW_THRESHOLD, 
+            input_request_message=f"Введите новый порог (от 0.00 до 0.80) для подписки ID: {subscription_id}"
+        )
 
     async def process_new_threshold(self, message: types.Message, state: FSMContext):
         """Обрабатывает новый порог подписки."""
@@ -518,7 +622,13 @@ class SubscriptionManagerFSM:
             if not 0.00 <= new_threshold <= 0.80:
                 raise ValueError
         except ValueError:
-            await message.reply("Некорректный порог. Введите число от 0.00 до 0.80.")
+            # await message.reply("Некорректный порог. Введите число от 0.00 до 0.80.")
+            await wait_for_user_input(
+                message,
+                state,
+                SubscriptionStates.WAITING_FOR_THRESHOLD,
+                input_request_message="Некорректный порог. Введите число от 0.00 до 0.80:"
+            )
             return
 
         user_data = await state.get_data()
@@ -587,14 +697,24 @@ feedback_states = FeedbackStates()
 # Создаем функцию-обработчик для команды /feedback
 @dp.message(Command("feedback"))
 async def cmd_feedback(message: types.Message, state: FSMContext):
-    await state.set_state(feedback_states.WAITING_FOR_FEEDBACK)
-    await message.answer(
+    # await state.set_state(feedback_states.WAITING_FOR_FEEDBACK)
+    # await message.answer(
+    #     "Оставьте свой отзыв о работе бота ARS Inform:\n\n"
+    #     "💬  Опишите, что вам понравилось или не понравилось.\n"
+    #     "💡  Предложите идеи для улучшения.\n\n"
+    #     "Ваше мнение поможет сделать бота лучше! 🙏",
+    #     reply_markup=ReplyKeyboardRemove()
+    #     )
+    await wait_for_user_input(
+        message,
+        state,
+        feedback_states.WAITING_FOR_FEEDBACK,
+        input_request_message=
         "Оставьте свой отзыв о работе бота ARS Inform:\n\n"
         "💬  Опишите, что вам понравилось или не понравилось.\n"
         "💡  Предложите идеи для улучшения.\n\n"
-        "Ваше мнение поможет сделать бота лучше! 🙏",
-        reply_markup=ReplyKeyboardRemove()
-        )
+        "Ваше мнение поможет сделать бота лучше! 🙏"
+    )
 
 # Обработчик для состояния ожидания отзыва
 @dp.message(F.state == feedback_states.WAITING_FOR_FEEDBACK)
@@ -641,12 +761,21 @@ async def cmd_subscriptions(message: types.Message):
 
 @dp.callback_query(lambda c: c.data.startswith("create_subscription"))
 async def handle_create_subscription(callback_query: types.CallbackQuery, state: FSMContext):
-    await state.set_state(SubscriptionStates.WAITING_FOR_QUERY)
-    await callback_query.message.answer(
-        "Введите текст для новой подписки:\n\n"
-        "Например: 'аргентина туризм' \n\n"
-        "Бот будет отправлять вам сообщения, соответствующие этому запросу.",
-        reply_markup=ReplyKeyboardRemove(),
+    # await state.set_state(SubscriptionStates.WAITING_FOR_QUERY)
+    # await callback_query.message.answer(
+    #     "Введите текст для новой подписки:\n\n"
+    #     "Например: 'аргентина туризм' \n\n"
+    #     "Бот будет отправлять вам сообщения, соответствующие этому запросу.",
+    #     reply_markup=ReplyKeyboardRemove(),
+    # )
+    await wait_for_user_input(
+        callback_query, # <-- Передаем CallbackQuery 
+        state, 
+        SubscriptionStates.WAITING_FOR_NEW_TEXT, 
+        input_request_message=
+            "Введите текст для новой подписки:\n\n"
+            "Например: 'аргентина туризм' \n\n"
+            "Бот будет отправлять вам сообщения, соответствующие этому запросу."
     )
 
 
@@ -724,7 +853,9 @@ async def handle_message(message: types.Message, state: FSMContext):  # Доба
     current_state = await state.get_state()
     if current_state is not None:
         # Если бот в состоянии FSM, обрабатываем сообщение в соответствии с текущим состоянием
-        if current_state == subscription_states.WAITING_FOR_QUERY: 
+        if current_state == SearchStates.WAITING_FOR_QUERY:
+            await process_search_query(message, state)
+        elif current_state == subscription_states.WAITING_FOR_QUERY: 
             await subscription_fsm.process_query(message, state)
         elif current_state == subscription_states.WAITING_FOR_THRESHOLD:
             await subscription_fsm.process_threshold(message, state)
@@ -747,24 +878,20 @@ async def handle_message(message: types.Message, state: FSMContext):  # Доба
                 parse_mode='HTML'
             )
         else:
-            if chat_id in cache and cache[chat_id]["wait"] == "search":
-                cache[chat_id]["is_new"] = True
-                await search(chat_id, message, message.text)
-            else:
-                db_manager.log_user_action(message.from_user.id, "message", message.text)
-                # Вызов LLM для обработки текста, не являющегося командой
-                llm_response = await llm_helper.process_user_input(message.text)
+            db_manager.log_user_action(message.from_user.id, "message", message.text)
+            # Вызов LLM для обработки текста, не являющегося командой
+            llm_response = await llm_helper.process_user_input(message.text)
 
-                # Обработка ответа LLM
-                if llm_response is not None:
-                    # Проверяем, является ли ответ вызовом функции или текстом
-                    if isinstance(llm_response, dict) and "name" in llm_response:
-                        await process_llm_response(message, llm_response, state)
-                    else:
-                        # Ответ - это просто текст
-                        await message.reply(llm_response)
-                # else:
-                # ... (обработка случая, когда LLM вернул None) ..
+            # Обработка ответа LLM
+            if llm_response is not None:
+                # Проверяем, является ли ответ вызовом функции или текстом
+                if isinstance(llm_response, dict) and "name" in llm_response:
+                    await process_llm_response(message, llm_response, state)
+                else:
+                    # Ответ - это просто текст
+                    await message.reply(llm_response)
+            # else:
+            # ... (обработка случая, когда LLM вернул None) ..
     else:
         # Обрабатываем другие типы сообщений
         content_type = message.content_type
