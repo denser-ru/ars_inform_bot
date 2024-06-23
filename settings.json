@@ -1,7 +1,7 @@
 {
     "scan_interval": 0,
     "DEBUG": 1,
-    "DEV": 0,
+    "DEV": 1,
     "CACHE_TTL": 900,
     "tmp_dir": "./tmp/",
     "GEMINI_API_KEY": "AIzaSyDervOzi5w7GYyBGVbXA6JyzqZ2lEFC4oY",
@@ -19,5 +19,8 @@
     "bot_dev_key": "6928736119:AAGU5LTz0WOEHZLxot3ug6xe69WO9Bp_4K8",
     "GROQ_API_KEY_DEV": "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",
     "GROQ_API_KEY": "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",
-    "GROQ_MODEL": "llama3-70b-8192"
+    "GROQ_MODEL": "llama3-70b-8192",
+    "fastapi_host": "0.0.0.0",
+    "fastapi_port": 8080,
+    "fastapi_token": "ARS_INFORM_BOT.DEV"
 }

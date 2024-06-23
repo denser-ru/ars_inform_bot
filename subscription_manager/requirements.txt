@@ -1,6 +1,7 @@
+aiohttp
 aiogram
 requests
 psycopg2-binary
-fastapi
-uvicorn
 apscheduler
+uvicorn
+fastapi

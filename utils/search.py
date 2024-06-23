@@ -143,7 +143,6 @@ class MessagesVectorizer:
     def interpret_vector_search_result(self, result):
         # Создаем пустой список для хранения строк с информацией о сообщениях
         number_words = self.settings["number_words"]
-        messages_info = []
         messages_info_txt = ""
         # Проходим по списку кортежей с помощью цикла for
         for entry in result:
@@ -216,4 +215,25 @@ score: {score}
             messages_info.append(text)
         # Вернем список messages_info как результат функции
         return messages_info
-    
+
+    def calculate_similarity(self, vector1, vector2) -> float:
+        """
+        Вычисляет косинусное сходство, используя оператор <-> pgvector.
+        Обрабатывает как списки, так и строки в формате pgvector.
+        """
+
+        # Преобразование в строковый формат pgvector при необходимости
+        if isinstance(vector1, list):
+            vector1 = '[' + ','.join(str(e) for e in vector1) + ']'
+        if isinstance(vector2, list):
+            vector2 = '[' + ','.join(str(e) for e in vector2) + ']'
+
+        # Выполнение SQL-запроса с использованием курсора, параметров и явным приведением типов
+        self.cursor.execute("SELECT %s::vector <-> %s::vector AS cosine_distance", (vector1, vector2))
+
+        # Получение результата
+        result = self.cursor.fetchone()
+        cosine_distance = result[0]
+
+        # Вернуть косинусное расстояние
+        return cosine_distance

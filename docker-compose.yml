@@ -2,16 +2,30 @@ version: '3'
 
 services:
   # Сервис для вашего телеграм бота
-  ars_inform:
+  ars_inform_dev:
     build: . # Ссылка на Dockerfile в текущей папке
     networks:
       - app-network # Указываем, что бот принадлежит к сети app-network
-    container_name: ars_inform_bot # Задаем сетевое имя для контейнера
+    container_name: ars_inform_bot_dev # Задаем сетевое имя для контейнера
     volumes: # Монтируем папку с кодом приложения в контейнер
       - ./:/app
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # network_mode: host
+
+  # Сервис для менеджера рассылки
+  ars_inform_subscription_manager_dev:
+    build:
+      context: .  # Используем тот же контекст, что и для бота
+      dockerfile: Dockerfile.sm  # Указываем Dockerfile для менеджера
+    networks:
+      - app-network
+    container_name: subscription_manager_dev # Задаем сетевое имя для контейнера
+    volumes:
+      - ./subscription_manager:/app  # Монтируем ту же папку с кодом, что и для бота
+      - ./utils:/app/utils
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 
 # Определяем сеть для связи между сервисами

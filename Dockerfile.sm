@@ -1,0 +1,15 @@
+FROM python:3.10
+
+WORKDIR /app
+
+# Установка зависимостей
+COPY ./subscription_manager/requirements.txt ./
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
+
+# Копирование файлов приложения
+COPY ./subscription_manager .
+COPY ./utils ./utils
+
+# Настройка точки входа
+CMD ["python", "subscription_manager.py"]
