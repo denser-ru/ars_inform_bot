@@ -36,7 +36,6 @@ class SubscriptionManager:
         self.notification_queue = PriorityQueue()
         self.scheduler = AsyncIOScheduler()
         self.scheduler.add_job(self.process_notifications, "interval", seconds=60)
-        self.scheduler.start()
         self.rate_limits = {
             1: timedelta(seconds=60),
             2: timedelta(minutes=5),
@@ -239,8 +238,7 @@ async def main():
     manager = SubscriptionManager(db_config, vectorizer, bot_webhook_url, bot_webhook_token)
     
     # Запускаем планировщик задач
-    # В нашем случае он уже был запущен в __init__
-    # manager.scheduler.start()  
+    manager.scheduler.start()  
     
     # # Обработка тестового сообщения
     # await manager.process_new_messages([{'message_id': 1028, 'group_id': -1001496846806}]) 

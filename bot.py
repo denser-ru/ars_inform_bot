@@ -967,6 +967,7 @@ async def main():
     await bot_test(bot)
     # # Затем начинаем поллинг
     # await dp.start_polling(bot)
+    manager.scheduler.start()
 
     # Затем начинаем поллинг
     asyncio.create_task(dp.start_polling(bot)) 
