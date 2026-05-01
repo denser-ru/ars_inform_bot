@@ -409,11 +409,12 @@ async def cmd_news(message: types.Message):
     db_manager.log_user_action(message.from_user.id, "news")
     await message.reply("Команда <code>/news</code> пока ещё в разработке", parse_mode='HTML')
 
+class CurrencyStates(StatesGroup):
+    WAITING_FOR_DATE = State()
+
 @dp.message( Command( "currency" ) )
 async def cmd_currency( message: types.Message ):
     rates_sources = rdc.get_sourses()
-
-    # Логируем действие пользователя "получение курса валют"
     db_manager.log_user_action(message.from_user.id, "currency")
 
     rate_txt_line = '' 
@@ -425,8 +426,63 @@ async def cmd_currency( message: types.Message ):
         rate_txt_line += f"<pre>{ title }: "
         rate_txt_line += f'[<i>{(latest_data_sell[5] + time_delta).strftime("%Y-%m-%d %H:%M")}</i>]\n'
         rate_txt_line += f'    <b>{round(latest_data_sell[4], 2)}</b> / <b>{round(latest_data_buy[4], 2)}</b></pre>\n\n'
+    
     msg = "<b>Курсы ARS к USD</b> (USDT)\n\n" + rate_txt_line
-    await message.reply(msg, parse_mode='HTML')
+    
+    # --- НОВЫЙ БЛОК: Кнопка для вызова истории ---
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📅 Узнать курс на выбранную дату", callback_data="history_currency")]
+    ])
+    await message.reply(msg, parse_mode='HTML', reply_markup=keyboard)
+
+
+@dp.callback_query(F.data == "history_currency")
+async def ask_for_historical_date(callback_query: types.CallbackQuery, state: FSMContext):
+    # Вызываем уже существующую функцию запроса ввода
+    await wait_for_user_input(
+        callback_query,
+        state, 
+        CurrencyStates.WAITING_FOR_DATE, 
+        input_request_message="Введите дату в формате ГГГГ-ММ-ДД (например, 2023-10-25):"
+    )
+
+@dp.message(F.state == CurrencyStates.WAITING_FOR_DATE)
+async def process_historical_currency(message: types.Message, state: FSMContext):
+    target_date = message.text.strip()
+    
+    try:
+        # Жесткая валидация формата
+        datetime.strptime(target_date, "%Y-%m-%d")
+    except ValueError:
+        await wait_for_user_input(
+            message,
+            state,
+            CurrencyStates.WAITING_FOR_DATE,
+            input_request_message="❌ Неверный формат. Пожалуйста, введите дату строго в формате ГГГГ-ММ-ДД:"
+        )
+        return
+
+    # Запрашиваем БД (здесь 1 - это PairID для ARS/USDT, при необходимости измени под свои нужды)
+    result = db_manager.get_rate_by_date(pair_id=1, target_date=target_date) 
+    
+    if not result:
+        await message.reply("Не удалось найти данные в базе.")
+    elif result["status"] == "exact":
+        dt, rate_val, rate_type = result["data"]
+        await message.reply(f"📅 Курс на <b>{dt.strftime('%Y-%m-%d %H:%M')}</b>:\n<b>{rate_val}</b> ({rate_type})", parse_mode='HTML')
+    elif result["status"] == "nearest":
+        before = result.get("before")
+        after = result.get("after")
+        
+        response = f"Точных данных за <b>{target_date}</b> не найдено. Ближайшие курсы:\n\n"
+        if before:
+            response += f"⬅️ До: {before[0].strftime('%Y-%m-%d %H:%M')} — <b>{before[1]}</b> ({before[2]})\n"
+        if after:
+            response += f"➡️ После: {after[0].strftime('%Y-%m-%d %H:%M')} — <b>{after[1]}</b> ({after[2]})\n"
+            
+        await message.reply(response, parse_mode='HTML')
+        
+    await state.set_state(None)
 
 
 
@@ -865,6 +921,8 @@ async def handle_message(message: types.Message, state: FSMContext):  # Доба
             await subscription_fsm.process_new_threshold(message, state)
         elif current_state == feedback_states.WAITING_FOR_FEEDBACK:
             await process_feedback(message, state)
+        elif current_state == CurrencyStates.WAITING_FOR_DATE:
+            await process_historical_currency(message, state)
         return  # Не обрабатываем сообщение, если бот в состоянии FSM
 
     # Проверяем тип сообщения
