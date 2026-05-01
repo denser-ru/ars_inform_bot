@@ -70,7 +70,7 @@ settings_def = {
 	"sort_by": 'relevance'
 }
 
-WAITING_FOR_QUERY_TIMEOUT = 30  # Таймаут ожидания в секундах
+WAITING_FOR_QUERY_TIMEOUT = 60  # Таймаут ожидания в секундах
 
 
 async def bot_test(bot):
@@ -461,25 +461,28 @@ async def process_historical_currency(message: types.Message, state: FSMContext)
         )
         return
 
-    # Запрашиваем БД (параметр pair_id убрали для выборки по всем источникам)
     result = db_manager.get_rate_by_date(target_date=target_date) 
     
     if not result:
         await message.reply("Не удалось выполнить поиск по базе данных.")
     elif result["status"] == "exact":
-        # Группируем результаты по источникам
         rates_by_source = {}
         for row in result["data"]:
             source_name, rate_type, rate_val, dt = row
             if source_name not in rates_by_source:
-                rates_by_source[source_name] = {"SELL": 0, "BUY": 0, "time": dt}
+                rates_by_source[source_name] = {"SELL": None, "BUY": None, "time": dt}
             rates_by_source[source_name][rate_type] = rate_val
             
         response = f"📅 <b>Курсы ARS к USD на {target_date}</b>\n\n"
         for src, data in rates_by_source.items():
             time_delta = timedelta(hours=-3)
             time_str = (data['time'] + time_delta).strftime("%Y-%m-%d %H:%M")
-            response += f"<pre>{src}: [{time_str}]\n    <b>{round(data['SELL'], 2)}</b> / <b>{round(data['BUY'], 2)}</b></pre>\n\n"
+            
+            # rate_val уже имеет тип decimal.Decimal, безопасно форматируем
+            sell_val = f"{data['SELL']:.2f}" if data['SELL'] is not None else "---"
+            buy_val = f"{data['BUY']:.2f}" if data['BUY'] is not None else "---"
+            
+            response += f"<pre>{src}: [{time_str}]\n    <b>{sell_val}</b> / <b>{buy_val}</b></pre>\n\n"
             
         await message.reply(response, parse_mode='HTML')
     elif result["status"] == "nearest":

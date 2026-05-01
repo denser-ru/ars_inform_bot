@@ -201,14 +201,14 @@ class DBManager:
 		"""
 		try:
 			with self.db_connection:
-				# 1. Поиск данных за день: берем последние BUY/SELL по каждому источнику
+				# 1. Поиск точных данных с жестким кастом типа ::date
 				self.db_cursor.execute(
 					"""
 					SELECT DISTINCT ON (s.SourceName, er.RateType) 
 						s.SourceName, er.RateType, er.RateValue, er.Timestamp 
 					FROM ExchangeRates er
 					JOIN Sources s ON er.RateSource = s.SourceID
-					WHERE DATE(er.Timestamp) = %s
+					WHERE DATE(er.Timestamp) = %s::date
 					ORDER BY s.SourceName, er.RateType, er.Timestamp DESC;
 					""",
 					(target_date,)
@@ -218,22 +218,22 @@ class DBManager:
 				if exact_matches:
 					return {"status": "exact", "data": exact_matches}
 
-				# 2. Поиск ближайшей даты ДО запрошенной
+				# 2. Поиск ближайшей даты ДО
 				self.db_cursor.execute(
 					"""
 					SELECT DATE(Timestamp) FROM ExchangeRates 
-					WHERE DATE(Timestamp) < %s 
+					WHERE DATE(Timestamp) < %s::date 
 					ORDER BY Timestamp DESC LIMIT 1;
 					""",
 					(target_date,)
 				)
 				before = self.db_cursor.fetchone()
 
-				# 3. Поиск ближайшей даты ПОСЛЕ запрошенной
+				# 3. Поиск ближайшей даты ПОСЛЕ
 				self.db_cursor.execute(
 					"""
 					SELECT DATE(Timestamp) FROM ExchangeRates 
-					WHERE DATE(Timestamp) > %s 
+					WHERE DATE(Timestamp) > %s::date 
 					ORDER BY Timestamp ASC LIMIT 1;
 					""",
 					(target_date,)
