@@ -451,7 +451,6 @@ async def process_historical_currency(message: types.Message, state: FSMContext)
     target_date = message.text.strip()
     
     try:
-        # Жесткая валидация формата
         datetime.strptime(target_date, "%Y-%m-%d")
     except ValueError:
         await wait_for_user_input(
@@ -462,23 +461,38 @@ async def process_historical_currency(message: types.Message, state: FSMContext)
         )
         return
 
-    # Запрашиваем БД (здесь 1 - это PairID для ARS/USDT, при необходимости измени под свои нужды)
-    result = db_manager.get_rate_by_date(pair_id=1, target_date=target_date) 
+    # Запрашиваем БД (параметр pair_id убрали для выборки по всем источникам)
+    result = db_manager.get_rate_by_date(target_date=target_date) 
     
     if not result:
-        await message.reply("Не удалось найти данные в базе.")
+        await message.reply("Не удалось выполнить поиск по базе данных.")
     elif result["status"] == "exact":
-        dt, rate_val, rate_type = result["data"]
-        await message.reply(f"📅 Курс на <b>{dt.strftime('%Y-%m-%d %H:%M')}</b>:\n<b>{rate_val}</b> ({rate_type})", parse_mode='HTML')
+        # Группируем результаты по источникам
+        rates_by_source = {}
+        for row in result["data"]:
+            source_name, rate_type, rate_val, dt = row
+            if source_name not in rates_by_source:
+                rates_by_source[source_name] = {"SELL": 0, "BUY": 0, "time": dt}
+            rates_by_source[source_name][rate_type] = rate_val
+            
+        response = f"📅 <b>Курсы ARS к USD на {target_date}</b>\n\n"
+        for src, data in rates_by_source.items():
+            time_delta = timedelta(hours=-3)
+            time_str = (data['time'] + time_delta).strftime("%Y-%m-%d %H:%M")
+            response += f"<pre>{src}: [{time_str}]\n    <b>{round(data['SELL'], 2)}</b> / <b>{round(data['BUY'], 2)}</b></pre>\n\n"
+            
+        await message.reply(response, parse_mode='HTML')
     elif result["status"] == "nearest":
-        before = result.get("before")
-        after = result.get("after")
+        before = result.get("before_date")
+        after = result.get("after_date")
         
-        response = f"Точных данных за <b>{target_date}</b> не найдено. Ближайшие курсы:\n\n"
+        response = f"Точных данных за <b>{target_date}</b> не найдено. Ближайшие даты в базе:\n\n"
         if before:
-            response += f"⬅️ До: {before[0].strftime('%Y-%m-%d %H:%M')} — <b>{before[1]}</b> ({before[2]})\n"
+            response += f"⬅️ До: <b>{before.strftime('%Y-%m-%d')}</b>\n"
         if after:
-            response += f"➡️ После: {after[0].strftime('%Y-%m-%d %H:%M')} — <b>{after[1]}</b> ({after[2]})\n"
+            response += f"➡️ После: <b>{after.strftime('%Y-%m-%d')}</b>\n"
+        if not before and not after:
+            response += "<i>В базе пока нет исторических данных для сравнения.</i>\n"
             
         await message.reply(response, parse_mode='HTML')
         

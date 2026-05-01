@@ -194,57 +194,57 @@ class DBManager:
 		except psycopg2.Error as e:
 			logger.error(f"Ошибка удаления подписки: {e}")
 
-	def get_rate_by_date(self, pair_id: int, target_date: str) -> dict:
+	def get_rate_by_date(self, target_date: str) -> dict:
 		"""
-		Возвращает исторический курс валюты (последнюю запись) на указанную дату. 
-		Если совпадения нет, ищет ближайшие доступные записи до и после.
+		Возвращает исторический курс валюты по всем источникам на указанную дату. 
+		Если совпадения нет, ищет ближайшие даты до и после.
 		"""
 		try:
 			with self.db_connection:
-				# 1. Поиск точного совпадения за день (берем самую свежую запись этого дня)
+				# 1. Поиск данных за день: берем последние BUY/SELL по каждому источнику
 				self.db_cursor.execute(
 					"""
-					SELECT Timestamp, RateValue, RateType 
-					FROM ExchangeRates 
-					WHERE PairID = %s AND DATE(Timestamp) = %s
-					ORDER BY Timestamp DESC LIMIT 1;
+					SELECT DISTINCT ON (s.SourceName, er.RateType) 
+						s.SourceName, er.RateType, er.RateValue, er.Timestamp 
+					FROM ExchangeRates er
+					JOIN Sources s ON er.RateSource = s.SourceID
+					WHERE DATE(er.Timestamp) = %s
+					ORDER BY s.SourceName, er.RateType, er.Timestamp DESC;
 					""",
-					(pair_id, target_date)
+					(target_date,)
 				)
-				exact_match = self.db_cursor.fetchone()
+				exact_matches = self.db_cursor.fetchall()
 				
-				if exact_match:
-					return {"status": "exact", "data": exact_match}
+				if exact_matches:
+					return {"status": "exact", "data": exact_matches}
 
 				# 2. Поиск ближайшей даты ДО запрошенной
 				self.db_cursor.execute(
 					"""
-					SELECT Timestamp, RateValue, RateType 
-					FROM ExchangeRates 
-					WHERE PairID = %s AND DATE(Timestamp) < %s 
+					SELECT DATE(Timestamp) FROM ExchangeRates 
+					WHERE DATE(Timestamp) < %s 
 					ORDER BY Timestamp DESC LIMIT 1;
 					""",
-					(pair_id, target_date)
+					(target_date,)
 				)
-				rate_before = self.db_cursor.fetchone()
+				before = self.db_cursor.fetchone()
 
 				# 3. Поиск ближайшей даты ПОСЛЕ запрошенной
 				self.db_cursor.execute(
 					"""
-					SELECT Timestamp, RateValue, RateType 
-					FROM ExchangeRates 
-					WHERE PairID = %s AND DATE(Timestamp) > %s 
+					SELECT DATE(Timestamp) FROM ExchangeRates 
+					WHERE DATE(Timestamp) > %s 
 					ORDER BY Timestamp ASC LIMIT 1;
 					""",
-					(pair_id, target_date)
+					(target_date,)
 				)
-				rate_after = self.db_cursor.fetchone()
+				after = self.db_cursor.fetchone()
 
 				return {
 					"status": "nearest",
-					"before": rate_before,
-					"after": rate_after
+					"before_date": before[0] if before else None,
+					"after_date": after[0] if after else None
 				}
 		except psycopg2.Error as e:
-			logger.error(f"Ошибка при получении курса по дате (PairID={pair_id}): {e}")
+			logger.error(f"Ошибка при получении исторического курса: {e}")
 			return None
