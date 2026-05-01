@@ -771,7 +771,7 @@ async def handle_create_subscription(callback_query: types.CallbackQuery, state:
     await wait_for_user_input(
         callback_query, # <-- Передаем CallbackQuery 
         state, 
-        SubscriptionStates.WAITING_FOR_NEW_TEXT, 
+        SubscriptionStates.WAITING_FOR_QUERY, 
         input_request_message=
             "Введите текст для новой подписки:\n\n"
             "Например: 'аргентина туризм' \n\n"
