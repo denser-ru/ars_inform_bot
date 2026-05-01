@@ -5,7 +5,7 @@ services:
   ars_inform_bot:
     build: . # Ссылка на Dockerfile в текущей папке
     depends_on:
-      - db # Указываем, что бот зависит от базы данных
+      - ars_inform_db # Указываем, что бот зависит от базы данных
     networks:
       - app-network # Указываем, что бот принадлежит к сети app-network
     container_name: ars_inform_bot # Задаем сетевое имя для контейнера
