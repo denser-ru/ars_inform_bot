@@ -67,10 +67,11 @@ CACHE_TTL = settings["CACHE_TTL"]
 settings_def = {
     "start_date": "*",
 	"end_date": "*",
-	"sort_by": 'relevance'
+	"sort_by": 'relevance',
+    "tz_offset": -3  # Зона по умолчанию: Аргентина (UTC-3)
 }
 
-WAITING_FOR_QUERY_TIMEOUT = 60  # Таймаут ожидания в секундах
+WAITING_FOR_QUERY_TIMEOUT = 120  # Таймаут ожидания в секундах
 
 
 async def bot_test(bot):
@@ -438,31 +439,42 @@ async def cmd_currency( message: types.Message ):
 
 @dp.callback_query(F.data == "history_currency")
 async def ask_for_historical_date(callback_query: types.CallbackQuery, state: FSMContext):
-    # Вызываем уже существующую функцию запроса ввода
     await wait_for_user_input(
         callback_query,
         state, 
         CurrencyStates.WAITING_FOR_DATE, 
-        input_request_message="Введите дату в формате ГГГГ-ММ-ДД (например, 2023-10-25):"
+        input_request_message="Введите дату (и опционально время)\n\nПример 1: 2026-05-01\nПример 2: 2026-05-01 15:30"
     )
 
 @dp.message(F.state == CurrencyStates.WAITING_FOR_DATE)
 async def process_historical_currency(message: types.Message, state: FSMContext):
-    target_date = message.text.strip()
+    target_text = message.text.strip()
+    chat_id = message.chat.id
+    has_time = False
+    
+    user_settings = cache.get(chat_id, {}).get("settings", settings_def)
+    tz_offset = user_settings.get("tz_offset", -3)
     
     try:
-        datetime.strptime(target_date, "%Y-%m-%d")
+        if len(target_text) > 10:
+            user_dt = datetime.strptime(target_text, "%Y-%m-%d %H:%M")
+            has_time = True
+            # Переводим время пользователя в UTC для базы данных
+            db_target_dt = user_dt - timedelta(hours=tz_offset)
+            db_target = db_target_dt.strftime("%Y-%m-%d %H:%M")
+        else:
+            datetime.strptime(target_text, "%Y-%m-%d")
+            db_target = target_text
     except ValueError:
         await wait_for_user_input(
             message,
             state,
             CurrencyStates.WAITING_FOR_DATE,
-            input_request_message="❌ Неверный формат. Пожалуйста, введите дату строго в формате ГГГГ-ММ-ДД:"
+            input_request_message="❌ Неверный формат.\n\nПример 1: 2026-05-01\nПример 2: 2026-05-01 15:30"
         )
         return
 
-    # 🔥 ИСПРАВЛЕНИЕ: Используем rdc (RatesDataCollector), который подключен к правильной базе
-    result = rdc.get_rate_by_date(target_date) 
+    result = rdc.get_rate_by_date(db_target, has_time) 
     
     if not result:
         await message.reply("Не удалось выполнить поиск по базе данных.")
@@ -474,12 +486,13 @@ async def process_historical_currency(message: types.Message, state: FSMContext)
                 rates_by_source[source_title] = {"SELL": None, "BUY": None, "time": dt}
             rates_by_source[source_title][rate_type] = rate_val
             
-        response = f"📅 <b>Курсы ARS к USD на {target_date}</b>\n\n"
+        display_target = user_dt.strftime("%Y-%m-%d %H:%M") if has_time else target_text
+        sign = "+" if tz_offset >= 0 else ""
+        response = f"📅 <b>Курсы ARS к USD на {display_target}</b> <i>(UTC{sign}{tz_offset})</i>\n\n"
+        
         for src, data in rates_by_source.items():
-            # Применяем таймзону
-            time_delta = timedelta(hours=-3)
-            time_str = (data['time'] + time_delta).strftime("%Y-%m-%d %H:%M")
-            
+            # Переводим время из базы (UTC) обратно во время пользователя
+            time_str = (data['time'] + timedelta(hours=tz_offset)).strftime("%Y-%m-%d %H:%M")
             sell_val = f"{data['SELL']:.2f}" if data['SELL'] is not None else "---"
             buy_val = f"{data['BUY']:.2f}" if data['BUY'] is not None else "---"
             
@@ -487,14 +500,25 @@ async def process_historical_currency(message: types.Message, state: FSMContext)
             
         await message.reply(response, parse_mode='HTML')
     elif result["status"] == "nearest":
-        before = result.get("before_date")
-        after = result.get("after_date")
+        before = result.get("before_dt")
+        after = result.get("after_dt")
         
-        response = f"Точных данных за <b>{target_date}</b> не найдено. Ближайшие даты в базе:\n\n"
+        response = f"Точных данных за <b>{target_text}</b> не найдено. Ближайшие даты в базе:\n\n"
+        
         if before:
-            response += f"⬅️ До: <b>{before.strftime('%Y-%m-%d')}</b>\n"
+            if has_time:
+                before_str = (before + timedelta(hours=tz_offset)).strftime('%Y-%m-%d %H:%M')
+            else:
+                before_str = before.strftime('%Y-%m-%d')
+            response += f"⬅️ До: <b>{before_str}</b>\n"
+            
         if after:
-            response += f"➡️ После: <b>{after.strftime('%Y-%m-%d')}</b>\n"
+            if has_time:
+                after_str = (after + timedelta(hours=tz_offset)).strftime('%Y-%m-%d %H:%M')
+            else:
+                after_str = after.strftime('%Y-%m-%d')
+            response += f"➡️ После: <b>{after_str}</b>\n"
+            
         if not before and not after:
             response += "<i>В базе пока нет исторических данных для сравнения.</i>\n"
             
@@ -915,7 +939,33 @@ async def handle_subscription_help(callback_query: types.CallbackQuery):
 
 
 
+@dp.message(Command("timezone"))
+async def cmd_timezone(message: types.Message):
+    db_manager.log_user_action(message.from_user.id, "timezone")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇦🇷 Аргентина (UTC-3)", callback_data="set_tz:-3"),
+            InlineKeyboardButton(text="🇷🇺 Москва (UTC+3)", callback_data="set_tz:3")
+        ],
+        [
+            InlineKeyboardButton(text="🇪🇺 Европа (UTC+1)", callback_data="set_tz:1"),
+            InlineKeyboardButton(text="🇺🇸 Нью-Йорк (UTC-5)", callback_data="set_tz:-5")
+        ]
+    ])
+    await message.answer("Выберите ваш часовой пояс:", reply_markup=keyboard)
 
+@dp.callback_query(F.data.startswith("set_tz:"))
+async def handle_set_timezone(callback: types.CallbackQuery):
+    new_tz = int(callback.data.split(":")[1])
+    chat_id = callback.message.chat.id
+    
+    if chat_id in cache:
+        cache[chat_id]["settings"]["tz_offset"] = new_tz
+        db_manager.update_user_settings(chat_id, json.dumps(cache[chat_id]["settings"]))
+        
+    sign = "+" if new_tz >= 0 else ""
+    await callback.message.edit_text(f"✅ Часовой пояс установлен: UTC{sign}{new_tz}")
+    await callback.answer()
 
 @dp.message()
 async def handle_message(message: types.Message, state: FSMContext):  # Добавляем state
